@@ -1,0 +1,26 @@
+[package]
+name = "rbx"
+version = "0.1.0"
+edition = "2021"
+description = "CLI tool for querying and manipulating rekordbox master.db"
+authors = ["fusagiko / takayamaki"]
+license = "MIT"
+
+[dependencies]
+clap = { version = "4", features = ["derive", "env"] }
+sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite"] }
+libsqlite3-sys = { version = "0.30", features = ["bundled-sqlcipher-vendored-openssl"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+uuid = { version = "1", features = ["v4"] }
+chrono = "0.4"
+
+[dev-dependencies]
+tempfile = "3"
+assert_cmd = "2"
+regex = "1"
+
+[profile.release]
+strip = true
+lto = true
