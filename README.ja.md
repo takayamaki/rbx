@@ -77,6 +77,12 @@ rbx tracks filter --bpm-min 125 --bpm-max 135 --key 8A --tag TAG_ID
 rbx tracks update <id> --title '...' --artist '...' --bpm 128.0 \
     --key 8A --rating 4 --comment '...'
                                        # トラック情報更新（dry-run）
+rbx tracks update <id> --genre '...' --album '...' \
+    --track-no 3 --disc-no 1 --year 2018
+                                       # artist / genre / album は名前で解決
+                                       # （無ければ行を作る。"" でカラムを空にする）
+rbx tracks update <id> --path 'F:/Music/new name.m4a'
+                                       # ディスク上でファイルを移動したとき FolderPath を書き換える（FileNameL も追従）
 rbx tracks update <id> --bpm 130.0 --execute
                                        # トラック情報更新（実行）
 ```

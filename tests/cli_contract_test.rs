@@ -310,21 +310,115 @@ async fn tracks_update_genre_creates_native_format_genre_row() {
 /// `--album` resolves or creates a djmdAlbum row with the full native column
 /// set (AlbumArtistID, ImagePath, Compilation, SearchStr) and sets AlbumID.
 #[tokio::test]
-#[ignore = "pending"]
-async fn tracks_update_album_resolves_or_creates_album_row() {}
+async fn tracks_update_album_resolves_or_creates_album_row() {
+    let (db_path, _dir) = common::setup_db().await;
+
+    rbx_cmd(&db_path)
+        .args(["tracks", "update", "101", "--album", "MASTER ARTIST 01", "--execute"])
+        .assert()
+        .code(0);
+    // second track with the same album name must reuse the row
+    rbx_cmd(&db_path)
+        .args(["tracks", "update", "102", "--album", "MASTER ARTIST 01", "--execute"])
+        .assert()
+        .code(0);
+
+    let pool = common::open_pool(&db_path).await;
+    let ids: Vec<(String,)> = sqlx::query_as("SELECT AlbumID FROM djmdContent WHERE ID IN ('101', '102') ORDER BY ID")
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+    assert_eq!(ids[0].0, ids[1].0, "both tracks must point at the same album row");
+    let album_id = &ids[0].0;
+    assert!(album_id.chars().all(|c| c.is_ascii_digit()), "non-numeric album ID: {}", album_id);
+
+    let (name, album_artist, image, compilation, search, uuid, usn, created_at): (String, String, String, i64, String, String, i64, String) =
+        sqlx::query_as(
+            "SELECT Name, AlbumArtistID, ImagePath, Compilation, SearchStr, UUID, rb_local_usn, created_at \
+             FROM djmdAlbum WHERE ID = ?",
+        )
+        .bind(album_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(name, "MASTER ARTIST 01");
+    assert_eq!((album_artist.as_str(), image.as_str(), compilation, search.as_str()), ("", "", 0, ""));
+    assert!(!uuid.is_empty());
+    assert!(ts_regex().is_match(&created_at), "bad timestamp: {}", created_at);
+    let (counter,): (i64,) = sqlx::query_as(
+        "SELECT int_1 FROM agentRegistry WHERE registry_id = 'localUpdateCount'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(usn <= counter, "usn {} exceeds counter {}", usn, counter);
+    let (count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM djmdAlbum").fetch_one(&pool).await.unwrap();
+    assert_eq!(count, 1);
+}
 
 /// `--track-no`, `--disc-no`, `--year` write TrackNo / DiscNo / ReleaseYear.
 #[tokio::test]
-#[ignore = "pending"]
-async fn tracks_update_writes_numeric_columns() {}
+async fn tracks_update_writes_numeric_columns() {
+    let (db_path, _dir) = common::setup_db().await;
+
+    let assert = rbx_cmd(&db_path)
+        .args(["tracks", "update", "101", "--track-no", "7", "--disc-no", "2", "--year", "2018", "--execute"])
+        .assert()
+        .code(0);
+    let json = stdout_json(&assert);
+    assert_eq!(json["result"]["changes"]["track_no"], 7);
+    assert_eq!(json["result"]["changes"]["disc_no"], 2);
+    assert_eq!(json["result"]["changes"]["year"], 2018);
+
+    let pool = common::open_pool(&db_path).await;
+    let row: (i64, i64, i64) = sqlx::query_as("SELECT TrackNo, DiscNo, ReleaseYear FROM djmdContent WHERE ID = '101'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(row, (7, 2, 2018));
+}
 
 /// `--path` rewrites FolderPath and keeps FileNameL in sync with its basename.
 #[tokio::test]
-#[ignore = "pending"]
-async fn tracks_update_path_sets_folder_path_and_file_name() {}
+async fn tracks_update_path_sets_folder_path_and_file_name() {
+    let (db_path, _dir) = common::setup_db().await;
+
+    rbx_cmd(&db_path)
+        .args(["tracks", "update", "101", "--path", "F:/DJ用音楽/THE IDOLM@STER/01_S(mile)ING!.m4a", "--execute"])
+        .assert()
+        .code(0);
+
+    let pool = common::open_pool(&db_path).await;
+    let (folder, name_l): (String, String) = sqlx::query_as("SELECT FolderPath, FileNameL FROM djmdContent WHERE ID = '101'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(folder, "F:/DJ用音楽/THE IDOLM@STER/01_S(mile)ING!.m4a");
+    assert_eq!(name_l, "01_S(mile)ING!.m4a");
+}
 
 /// `--artist ""` (and the same for genre / album) clears the FK column to ""
 /// without creating a row whose Name is empty.
 #[tokio::test]
-#[ignore = "pending"]
-async fn tracks_update_empty_string_clears_fk_without_creating_row() {}
+async fn tracks_update_empty_string_clears_fk_without_creating_row() {
+    let (db_path, _dir) = common::setup_db().await;
+
+    rbx_cmd(&db_path)
+        .args(["tracks", "update", "101", "--artist", "", "--genre", "", "--album", "", "--execute"])
+        .assert()
+        .code(0);
+
+    let pool = common::open_pool(&db_path).await;
+    let row: (String, String, String) = sqlx::query_as("SELECT ArtistID, GenreID, AlbumID FROM djmdContent WHERE ID = '101'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(row, ("".into(), "".into(), "".into()));
+    for table in ["djmdArtist", "djmdGenre", "djmdAlbum"] {
+        let (count,): (i64,) = sqlx::query_as(&format!("SELECT COUNT(*) FROM {} WHERE Name = ''", table))
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(count, 0, "{} must not get a row with an empty Name", table);
+    }
+}
