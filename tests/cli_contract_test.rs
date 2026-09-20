@@ -242,15 +242,70 @@ async fn query_unsafe_write_allows_writes() {
 /// `--genre` on a name that already exists in djmdGenre must reuse that row's
 /// ID instead of creating a duplicate.
 #[tokio::test]
-#[ignore = "pending"]
-async fn tracks_update_genre_reuses_existing_genre_row() {}
+async fn tracks_update_genre_reuses_existing_genre_row() {
+    let (db_path, _dir) = common::setup_db().await;
+
+    let assert = rbx_cmd(&db_path)
+        .args(["tracks", "update", "101", "--genre", "Anime", "--execute"])
+        .assert()
+        .code(0);
+    let json = stdout_json(&assert);
+    assert_eq!(json["kind"], "tracks.update");
+    assert_eq!(json["result"]["changes"]["genre"], "Anime");
+
+    let pool = common::open_pool(&db_path).await;
+    let (genre_id,): (String,) = sqlx::query_as("SELECT GenreID FROM djmdContent WHERE ID = '101'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(genre_id, "501", "must reuse the seeded djmdGenre row");
+    let (count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM djmdGenre WHERE Name = 'Anime'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(count, 1, "must not create a duplicate genre row");
+}
 
 /// `--genre` on an unknown name creates a djmdGenre row in native format
 /// (numeric ID, UUID, USN within the counter, native timestamps) and points
 /// the track at it.
 #[tokio::test]
-#[ignore = "pending"]
-async fn tracks_update_genre_creates_native_format_genre_row() {}
+async fn tracks_update_genre_creates_native_format_genre_row() {
+    let (db_path, _dir) = common::setup_db().await;
+
+    rbx_cmd(&db_path)
+        .args(["tracks", "update", "101", "--genre", "IM@S SOLO", "--execute"])
+        .assert()
+        .code(0);
+
+    let pool = common::open_pool(&db_path).await;
+    let (genre_id,): (String,) = sqlx::query_as("SELECT GenreID FROM djmdContent WHERE ID = '101'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(genre_id.chars().all(|c| c.is_ascii_digit()), "non-numeric genre ID: {}", genre_id);
+
+    let (name, uuid, usn, created_at, updated_at): (String, String, i64, String, String) = sqlx::query_as(
+        "SELECT Name, UUID, rb_local_usn, created_at, updated_at FROM djmdGenre WHERE ID = ?",
+    )
+    .bind(&genre_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(name, "IM@S SOLO");
+    assert!(!uuid.is_empty());
+    assert_ne!(uuid, genre_id);
+    assert!(ts_regex().is_match(&created_at), "bad timestamp: {}", created_at);
+    assert!(ts_regex().is_match(&updated_at), "bad timestamp: {}", updated_at);
+
+    let (counter,): (i64,) = sqlx::query_as(
+        "SELECT int_1 FROM agentRegistry WHERE registry_id = 'localUpdateCount'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(usn <= counter, "usn {} exceeds counter {}", usn, counter);
+}
 
 /// `--album` resolves or creates a djmdAlbum row with the full native column
 /// set (AlbumArtistID, ImagePath, Compilation, SearchStr) and sets AlbumID.

@@ -51,13 +51,24 @@ async fn create_schema(pool: &SqlitePool) {
         format!(
             "CREATE TABLE djmdContent (\
              ID TEXT PRIMARY KEY, Title TEXT, ArtistID TEXT, KeyID TEXT, \
-             Length INTEGER, BPM INTEGER, FolderPath TEXT, Rating INTEGER, \
-             ColorID TEXT, Commnt TEXT, {})",
+             Length INTEGER, BPM INTEGER, FolderPath TEXT, FileNameL TEXT, FileNameS TEXT, \
+             Rating INTEGER, ColorID TEXT, Commnt TEXT, \
+             GenreID TEXT, AlbumID TEXT, TrackNo INTEGER, DiscNo INTEGER, ReleaseYear INTEGER, {})",
             RB_COLUMNS
         ),
         format!(
             "CREATE TABLE djmdArtist (\
              ID TEXT PRIMARY KEY, Name TEXT, SearchStr TEXT, {})",
+            RB_COLUMNS
+        ),
+        format!(
+            "CREATE TABLE djmdGenre (ID TEXT PRIMARY KEY, Name TEXT, {})",
+            RB_COLUMNS
+        ),
+        format!(
+            "CREATE TABLE djmdAlbum (\
+             ID TEXT PRIMARY KEY, Name TEXT, AlbumArtistID TEXT, ImagePath TEXT, \
+             Compilation INTEGER, SearchStr TEXT, {})",
             RB_COLUMNS
         ),
         "CREATE TABLE djmdKey (ID TEXT PRIMARY KEY, ScaleName TEXT, Seq INTEGER)".to_string(),
@@ -130,6 +141,16 @@ async fn seed(pool: &SqlitePool) {
     sqlx::query(
         "INSERT INTO djmdArtist (ID, Name, SearchStr, UUID, rb_local_usn, created_at, updated_at) \
          VALUES ('201', 'Artist A', 'Artist A', 'a0000000-0000-0000-0000-000000000201', 10, ?, ?)",
+    )
+    .bind(SEED_TS)
+    .bind(SEED_TS)
+    .execute(pool)
+    .await
+    .unwrap();
+
+    sqlx::query(
+        "INSERT INTO djmdGenre (ID, Name, UUID, rb_local_usn, created_at, updated_at) \
+         VALUES ('501', 'Anime', 'g0000000-0000-0000-0000-000000000501', 10, ?, ?)",
     )
     .bind(SEED_TS)
     .bind(SEED_TS)
