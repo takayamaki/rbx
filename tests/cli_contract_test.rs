@@ -234,3 +234,42 @@ async fn query_unsafe_write_allows_writes() {
             .unwrap();
     assert_eq!(count, 1);
 }
+
+// --- tracks update: genre / album / numeric fields / path ---
+// Order: the everyday case (retag a genre) first, then album, plain numeric
+// columns, file path, and finally clearing an FK column with an empty string.
+
+/// `--genre` on a name that already exists in djmdGenre must reuse that row's
+/// ID instead of creating a duplicate.
+#[tokio::test]
+#[ignore = "pending"]
+async fn tracks_update_genre_reuses_existing_genre_row() {}
+
+/// `--genre` on an unknown name creates a djmdGenre row in native format
+/// (numeric ID, UUID, USN within the counter, native timestamps) and points
+/// the track at it.
+#[tokio::test]
+#[ignore = "pending"]
+async fn tracks_update_genre_creates_native_format_genre_row() {}
+
+/// `--album` resolves or creates a djmdAlbum row with the full native column
+/// set (AlbumArtistID, ImagePath, Compilation, SearchStr) and sets AlbumID.
+#[tokio::test]
+#[ignore = "pending"]
+async fn tracks_update_album_resolves_or_creates_album_row() {}
+
+/// `--track-no`, `--disc-no`, `--year` write TrackNo / DiscNo / ReleaseYear.
+#[tokio::test]
+#[ignore = "pending"]
+async fn tracks_update_writes_numeric_columns() {}
+
+/// `--path` rewrites FolderPath and keeps FileNameL in sync with its basename.
+#[tokio::test]
+#[ignore = "pending"]
+async fn tracks_update_path_sets_folder_path_and_file_name() {}
+
+/// `--artist ""` (and the same for genre / album) clears the FK column to ""
+/// without creating a row whose Name is empty.
+#[tokio::test]
+#[ignore = "pending"]
+async fn tracks_update_empty_string_clears_fk_without_creating_row() {}
