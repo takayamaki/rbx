@@ -5,7 +5,9 @@ use uuid::Uuid;
 /// rekordbox silently ignores rows whose timestamps lack the millisecond
 /// and timezone suffix.
 pub fn now_datetime() -> String {
-    chrono::Utc::now().format("%Y-%m-%d %H:%M:%S%.3f +00:00").to_string()
+    chrono::Utc::now()
+        .format("%Y-%m-%d %H:%M:%S%.3f +00:00")
+        .to_string()
 }
 
 /// Allocates `count` sequential USNs from the global counter in agentRegistry
@@ -13,11 +15,14 @@ pub fn now_datetime() -> String {
 /// allocated USN. rekordbox expects row rb_local_usn values to never exceed
 /// this counter.
 pub async fn allocate_usns(pool: &SqlitePool, count: i64) -> Result<i64, sqlx::Error> {
-    let (current,): (i64,) = sqlx::query_as(
-        "SELECT int_1 FROM agentRegistry WHERE registry_id = 'localUpdateCount'"
-    ).fetch_one(pool).await?;
+    let (current,): (i64,) =
+        sqlx::query_as("SELECT int_1 FROM agentRegistry WHERE registry_id = 'localUpdateCount'")
+            .fetch_one(pool)
+            .await?;
     sqlx::query("UPDATE agentRegistry SET int_1 = ? WHERE registry_id = 'localUpdateCount'")
-        .bind(current + count).execute(pool).await?;
+        .bind(current + count)
+        .execute(pool)
+        .await?;
     Ok(current + 1)
 }
 

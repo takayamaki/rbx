@@ -44,7 +44,9 @@ pub fn error(category: &str, exit_code: i32, message: &str, next_step: Option<&s
         "message": message,
     });
     if let Some(ns) = next_step {
-        err.as_object_mut().unwrap().insert("next_step".to_string(), Value::String(ns.to_string()));
+        err.as_object_mut()
+            .unwrap()
+            .insert("next_step".to_string(), Value::String(ns.to_string()));
     }
     serde_json::json!({
         "schema_version": SCHEMA_VERSION,

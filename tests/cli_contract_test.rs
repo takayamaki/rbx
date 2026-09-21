@@ -33,7 +33,11 @@ async fn playlists_create_writes_native_format_row() {
     assert_eq!(json["kind"], "playlists.create");
     assert_eq!(json["dry_run"], false);
     let id = json["result"]["id"].as_str().unwrap();
-    assert!(id.chars().all(|c| c.is_ascii_digit()), "non-numeric ID: {}", id);
+    assert!(
+        id.chars().all(|c| c.is_ascii_digit()),
+        "non-numeric ID: {}",
+        id
+    );
 
     let pool = common::open_pool(&db_path).await;
     let row: (String, String, i64, i64, String, i64, i64, i64, i64) = sqlx::query_as(
@@ -51,16 +55,24 @@ async fn playlists_create_writes_native_format_row() {
     assert_ne!(uuid, id, "UUID must be distinct from the row ID");
     assert_eq!(parent_id, "root");
     assert!(seq >= 1);
-    assert!(ts_regex().is_match(&created_at), "bad timestamp: {}", created_at);
+    assert!(
+        ts_regex().is_match(&created_at),
+        "bad timestamp: {}",
+        created_at
+    );
     assert_eq!((ds, lds, ld, ls), (0, 0, 0, 0));
 
-    let (counter,): (i64,) = sqlx::query_as(
-        "SELECT int_1 FROM agentRegistry WHERE registry_id = 'localUpdateCount'",
-    )
-    .fetch_one(&pool)
-    .await
-    .unwrap();
-    assert!(usn <= counter, "row USN {} exceeds counter {}", usn, counter);
+    let (counter,): (i64,) =
+        sqlx::query_as("SELECT int_1 FROM agentRegistry WHERE registry_id = 'localUpdateCount'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(
+        usn <= counter,
+        "row USN {} exceeds counter {}",
+        usn,
+        counter
+    );
 }
 
 #[tokio::test]
@@ -83,7 +95,11 @@ async fn tracks_mytags_add_allocates_usn_and_uuid() {
 
     assert!(!uuid.is_empty());
     assert_eq!(usn, 1001, "first allocation from seeded counter 1000");
-    assert!(ts_regex().is_match(&created_at), "bad timestamp: {}", created_at);
+    assert!(
+        ts_regex().is_match(&created_at),
+        "bad timestamp: {}",
+        created_at
+    );
 }
 
 /// Bulk adds must allocate contiguous USNs and leave the counter equal to
@@ -105,14 +121,17 @@ async fn bulk_mytags_add_keeps_usns_contiguous_with_counter() {
     .await
     .unwrap();
     let usns: Vec<i64> = usns.into_iter().map(|(u,)| u).collect();
-    assert_eq!(usns, vec![1001, 1002], "contiguous block from seeded counter");
+    assert_eq!(
+        usns,
+        vec![1001, 1002],
+        "contiguous block from seeded counter"
+    );
 
-    let (counter,): (i64,) = sqlx::query_as(
-        "SELECT int_1 FROM agentRegistry WHERE registry_id = 'localUpdateCount'",
-    )
-    .fetch_one(&pool)
-    .await
-    .unwrap();
+    let (counter,): (i64,) =
+        sqlx::query_as("SELECT int_1 FROM agentRegistry WHERE registry_id = 'localUpdateCount'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
     assert_eq!(counter, *usns.last().unwrap());
 }
 
@@ -205,11 +224,10 @@ async fn query_is_read_only_by_default() {
         .code(2);
 
     let pool = common::open_pool(&db_path).await;
-    let (count,): (i64,) =
-        sqlx::query_as("SELECT COUNT(*) FROM djmdContent WHERE Title = 'pwned'")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
+    let (count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM djmdContent WHERE Title = 'pwned'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
     assert_eq!(count, 0);
 }
 
@@ -274,7 +292,14 @@ async fn tracks_update_genre_creates_native_format_genre_row() {
     let (db_path, _dir) = common::setup_db().await;
 
     rbx_cmd(&db_path)
-        .args(["tracks", "update", "101", "--genre", "IM@S SOLO", "--execute"])
+        .args([
+            "tracks",
+            "update",
+            "101",
+            "--genre",
+            "IM@S SOLO",
+            "--execute",
+        ])
         .assert()
         .code(0);
 
@@ -283,27 +308,39 @@ async fn tracks_update_genre_creates_native_format_genre_row() {
         .fetch_one(&pool)
         .await
         .unwrap();
-    assert!(genre_id.chars().all(|c| c.is_ascii_digit()), "non-numeric genre ID: {}", genre_id);
+    assert!(
+        genre_id.chars().all(|c| c.is_ascii_digit()),
+        "non-numeric genre ID: {}",
+        genre_id
+    );
 
-    let (name, uuid, usn, created_at, updated_at): (String, String, i64, String, String) = sqlx::query_as(
-        "SELECT Name, UUID, rb_local_usn, created_at, updated_at FROM djmdGenre WHERE ID = ?",
-    )
-    .bind(&genre_id)
-    .fetch_one(&pool)
-    .await
-    .unwrap();
+    let (name, uuid, usn, created_at, updated_at): (String, String, i64, String, String) =
+        sqlx::query_as(
+            "SELECT Name, UUID, rb_local_usn, created_at, updated_at FROM djmdGenre WHERE ID = ?",
+        )
+        .bind(&genre_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
     assert_eq!(name, "IM@S SOLO");
     assert!(!uuid.is_empty());
     assert_ne!(uuid, genre_id);
-    assert!(ts_regex().is_match(&created_at), "bad timestamp: {}", created_at);
-    assert!(ts_regex().is_match(&updated_at), "bad timestamp: {}", updated_at);
+    assert!(
+        ts_regex().is_match(&created_at),
+        "bad timestamp: {}",
+        created_at
+    );
+    assert!(
+        ts_regex().is_match(&updated_at),
+        "bad timestamp: {}",
+        updated_at
+    );
 
-    let (counter,): (i64,) = sqlx::query_as(
-        "SELECT int_1 FROM agentRegistry WHERE registry_id = 'localUpdateCount'",
-    )
-    .fetch_one(&pool)
-    .await
-    .unwrap();
+    let (counter,): (i64,) =
+        sqlx::query_as("SELECT int_1 FROM agentRegistry WHERE registry_id = 'localUpdateCount'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
     assert!(usn <= counter, "usn {} exceeds counter {}", usn, counter);
 }
 
@@ -314,23 +351,45 @@ async fn tracks_update_album_resolves_or_creates_album_row() {
     let (db_path, _dir) = common::setup_db().await;
 
     rbx_cmd(&db_path)
-        .args(["tracks", "update", "101", "--album", "MASTER ARTIST 01", "--execute"])
+        .args([
+            "tracks",
+            "update",
+            "101",
+            "--album",
+            "MASTER ARTIST 01",
+            "--execute",
+        ])
         .assert()
         .code(0);
     // second track with the same album name must reuse the row
     rbx_cmd(&db_path)
-        .args(["tracks", "update", "102", "--album", "MASTER ARTIST 01", "--execute"])
+        .args([
+            "tracks",
+            "update",
+            "102",
+            "--album",
+            "MASTER ARTIST 01",
+            "--execute",
+        ])
         .assert()
         .code(0);
 
     let pool = common::open_pool(&db_path).await;
-    let ids: Vec<(String,)> = sqlx::query_as("SELECT AlbumID FROM djmdContent WHERE ID IN ('101', '102') ORDER BY ID")
-        .fetch_all(&pool)
-        .await
-        .unwrap();
-    assert_eq!(ids[0].0, ids[1].0, "both tracks must point at the same album row");
+    let ids: Vec<(String,)> =
+        sqlx::query_as("SELECT AlbumID FROM djmdContent WHERE ID IN ('101', '102') ORDER BY ID")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        ids[0].0, ids[1].0,
+        "both tracks must point at the same album row"
+    );
     let album_id = &ids[0].0;
-    assert!(album_id.chars().all(|c| c.is_ascii_digit()), "non-numeric album ID: {}", album_id);
+    assert!(
+        album_id.chars().all(|c| c.is_ascii_digit()),
+        "non-numeric album ID: {}",
+        album_id
+    );
 
     let (name, album_artist, image, compilation, search, uuid, usn, created_at): (String, String, String, i64, String, String, i64, String) =
         sqlx::query_as(
@@ -342,17 +401,31 @@ async fn tracks_update_album_resolves_or_creates_album_row() {
         .await
         .unwrap();
     assert_eq!(name, "MASTER ARTIST 01");
-    assert_eq!((album_artist.as_str(), image.as_str(), compilation, search.as_str()), ("", "", 0, ""));
+    assert_eq!(
+        (
+            album_artist.as_str(),
+            image.as_str(),
+            compilation,
+            search.as_str()
+        ),
+        ("", "", 0, "")
+    );
     assert!(!uuid.is_empty());
-    assert!(ts_regex().is_match(&created_at), "bad timestamp: {}", created_at);
-    let (counter,): (i64,) = sqlx::query_as(
-        "SELECT int_1 FROM agentRegistry WHERE registry_id = 'localUpdateCount'",
-    )
-    .fetch_one(&pool)
-    .await
-    .unwrap();
+    assert!(
+        ts_regex().is_match(&created_at),
+        "bad timestamp: {}",
+        created_at
+    );
+    let (counter,): (i64,) =
+        sqlx::query_as("SELECT int_1 FROM agentRegistry WHERE registry_id = 'localUpdateCount'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
     assert!(usn <= counter, "usn {} exceeds counter {}", usn, counter);
-    let (count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM djmdAlbum").fetch_one(&pool).await.unwrap();
+    let (count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM djmdAlbum")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
     assert_eq!(count, 1);
 }
 
@@ -362,7 +435,18 @@ async fn tracks_update_writes_numeric_columns() {
     let (db_path, _dir) = common::setup_db().await;
 
     let assert = rbx_cmd(&db_path)
-        .args(["tracks", "update", "101", "--track-no", "7", "--disc-no", "2", "--year", "2018", "--execute"])
+        .args([
+            "tracks",
+            "update",
+            "101",
+            "--track-no",
+            "7",
+            "--disc-no",
+            "2",
+            "--year",
+            "2018",
+            "--execute",
+        ])
         .assert()
         .code(0);
     let json = stdout_json(&assert);
@@ -371,10 +455,11 @@ async fn tracks_update_writes_numeric_columns() {
     assert_eq!(json["result"]["changes"]["year"], 2018);
 
     let pool = common::open_pool(&db_path).await;
-    let row: (i64, i64, i64) = sqlx::query_as("SELECT TrackNo, DiscNo, ReleaseYear FROM djmdContent WHERE ID = '101'")
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+    let row: (i64, i64, i64) =
+        sqlx::query_as("SELECT TrackNo, DiscNo, ReleaseYear FROM djmdContent WHERE ID = '101'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
     assert_eq!(row, (7, 2, 2018));
 }
 
@@ -384,15 +469,23 @@ async fn tracks_update_path_sets_folder_path_and_file_name() {
     let (db_path, _dir) = common::setup_db().await;
 
     rbx_cmd(&db_path)
-        .args(["tracks", "update", "101", "--path", "F:/DJ用音楽/THE IDOLM@STER/01_S(mile)ING!.m4a", "--execute"])
+        .args([
+            "tracks",
+            "update",
+            "101",
+            "--path",
+            "F:/DJ用音楽/THE IDOLM@STER/01_S(mile)ING!.m4a",
+            "--execute",
+        ])
         .assert()
         .code(0);
 
     let pool = common::open_pool(&db_path).await;
-    let (folder, name_l): (String, String) = sqlx::query_as("SELECT FolderPath, FileNameL FROM djmdContent WHERE ID = '101'")
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+    let (folder, name_l): (String, String) =
+        sqlx::query_as("SELECT FolderPath, FileNameL FROM djmdContent WHERE ID = '101'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
     assert_eq!(folder, "F:/DJ用音楽/THE IDOLM@STER/01_S(mile)ING!.m4a");
     assert_eq!(name_l, "01_S(mile)ING!.m4a");
 }
@@ -404,21 +497,34 @@ async fn tracks_update_empty_string_clears_fk_without_creating_row() {
     let (db_path, _dir) = common::setup_db().await;
 
     rbx_cmd(&db_path)
-        .args(["tracks", "update", "101", "--artist", "", "--genre", "", "--album", "", "--execute"])
+        .args([
+            "tracks",
+            "update",
+            "101",
+            "--artist",
+            "",
+            "--genre",
+            "",
+            "--album",
+            "",
+            "--execute",
+        ])
         .assert()
         .code(0);
 
     let pool = common::open_pool(&db_path).await;
-    let row: (String, String, String) = sqlx::query_as("SELECT ArtistID, GenreID, AlbumID FROM djmdContent WHERE ID = '101'")
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-    assert_eq!(row, ("".into(), "".into(), "".into()));
-    for table in ["djmdArtist", "djmdGenre", "djmdAlbum"] {
-        let (count,): (i64,) = sqlx::query_as(&format!("SELECT COUNT(*) FROM {} WHERE Name = ''", table))
+    let row: (String, String, String) =
+        sqlx::query_as("SELECT ArtistID, GenreID, AlbumID FROM djmdContent WHERE ID = '101'")
             .fetch_one(&pool)
             .await
             .unwrap();
+    assert_eq!(row, ("".into(), "".into(), "".into()));
+    for table in ["djmdArtist", "djmdGenre", "djmdAlbum"] {
+        let (count,): (i64,) =
+            sqlx::query_as(&format!("SELECT COUNT(*) FROM {} WHERE Name = ''", table))
+                .fetch_one(&pool)
+                .await
+                .unwrap();
         assert_eq!(count, 0, "{} must not get a row with an empty Name", table);
     }
 }

@@ -30,7 +30,11 @@ fn add_node_inserts_hex_node_before_closing_tag() {
 
     let content = std::fs::read_to_string(&path).unwrap();
     let expected_line = "    <NODE Id=\"BD87B6B\" ParentId=\"0\" Attribute=\"0\" Timestamp=\"1783478672000\" Lib_Type=\"0\" CheckType=\"0\"/>";
-    assert!(content.contains(expected_line), "node line missing:\n{}", content);
+    assert!(
+        content.contains(expected_line),
+        "node line missing:\n{}",
+        content
+    );
 
     // Exactly one line added right before </PLAYLISTS>; the rest is untouched.
     let restored: String = content
@@ -104,7 +108,10 @@ fn id_matching_is_not_fooled_by_parent_id() {
 
     // add_node must not treat the remaining ParentId reference as a duplicate.
     let added = add_node(&path, &folder_id, "root", 1, 42).unwrap();
-    assert!(added, "ParentId occurrence must not count as an existing Id");
+    assert!(
+        added,
+        "ParentId occurrence must not count as an existing Id"
+    );
 
     // remove_node must remove the node whose Id matches, not the child that
     // merely references it as ParentId.
