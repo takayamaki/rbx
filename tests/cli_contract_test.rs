@@ -794,7 +794,25 @@ async fn bulk_update_rejects_the_whole_batch_when_a_track_is_missing() {
 /// A field name that is not a `tracks update` flag (e.g. `trackNo`) is a
 /// usage error, so a plan generator with the wrong key names fails loudly.
 #[tokio::test]
-async fn bulk_update_rejects_unknown_field_names() {}
+async fn bulk_update_rejects_unknown_field_names() {
+    let (db_path, dir) = common::setup_db().await;
+    let plan = write_plan(&dir, r#"[{"id": "101", "fields": {"trackNo": 3}}]"#);
+
+    let assert = rbx_cmd(&db_path)
+        .args(["tracks", "bulk-update", plan.to_str().unwrap(), "--execute"])
+        .assert()
+        .code(2);
+    let json = stdout_json(&assert);
+    assert_eq!(json["error"]["category"], "usage");
+    assert!(
+        json["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("trackNo"),
+        "message must name the bad field: {}",
+        json
+    );
+}
 
 /// The same track ID twice in one plan is a conflict, not last-wins: it is
 /// almost always a bug in the plan generator.

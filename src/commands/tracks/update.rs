@@ -125,6 +125,7 @@ async fn resolve_key_id(pool: &SqlitePool, key_name: &str) -> Result<Option<Stri
 /// `None` = leave the column alone. JSON keys are the flag names in snake_case
 /// (`track_no`, `disc_no`).
 #[derive(Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct TrackFields {
     pub(crate) title: Option<String>,
     pub(crate) artist: Option<String>,
