@@ -260,3 +260,109 @@ async fn handle_mytags_delete(
         Err(e) => db_error(e),
     }
 }
+
+// --- describe ---
+
+use crate::describe::{describe_command, describe_resource, flag, mutation_result_schema};
+
+pub(crate) fn describe(action: Option<&str>) -> Option<serde_json::Value> {
+    Some(match action {
+        None => describe_resource(
+            "mytags",
+            &[
+                ("list", "List all My Tag categories and tags"),
+                ("tracks", "List tracks with a specific My Tag"),
+                (
+                    "create",
+                    "Create a new My Tag or category (dry-run by default)",
+                ),
+                ("delete", "Delete a My Tag (dry-run by default)"),
+            ],
+        ),
+        Some("list") => describe_command(
+            "mytags list",
+            &[],
+            &serde_json::json!({
+                "type": "array", "items": mytag_schema(),
+            }),
+            &["rbx mytags list"],
+        ),
+        Some("tracks") => describe_command(
+            "mytags tracks",
+            &[flag("id", "string", true, "My Tag ID")],
+            &serde_json::json!({
+                "type": "array", "items": mytag_track_schema(),
+            }),
+            &["rbx mytags tracks 12345"],
+        ),
+        Some("create") => describe_command(
+            "mytags create",
+            &[
+                flag("name", "string", true, "Tag name"),
+                flag(
+                    "--parent",
+                    "string",
+                    false,
+                    "Parent category ID (omit for top-level category)",
+                ),
+                flag(
+                    "--execute",
+                    "bool",
+                    false,
+                    "Actually apply the change (default: dry-run)",
+                ),
+            ],
+            &mutation_result_schema("mytags.create"),
+            &[
+                "rbx mytags create 'My Category'",
+                "rbx mytags create 'My Tag' --parent CATEGORY_ID --execute",
+            ],
+        ),
+        Some("delete") => describe_command(
+            "mytags delete",
+            &[
+                flag("id", "string", true, "My Tag ID"),
+                flag(
+                    "--execute",
+                    "bool",
+                    false,
+                    "Actually apply the change (default: dry-run)",
+                ),
+            ],
+            &mutation_result_schema("mytags.delete"),
+            &[
+                "rbx mytags delete TAG_ID",
+                "rbx mytags delete TAG_ID --execute",
+            ],
+        ),
+
+        // history
+        _ => return None,
+    })
+}
+
+fn mytag_schema() -> serde_json::Value {
+    serde_json::json!({
+        "type": "object",
+        "properties": {
+            "id": { "type": "string" },
+            "seq": { "type": "integer|null" },
+            "name": { "type": "string|null" },
+            "kind": { "type": "string", "enum": ["category", "tag"] },
+            "parent_id": { "type": "string|null" },
+        },
+    })
+}
+
+fn mytag_track_schema() -> serde_json::Value {
+    serde_json::json!({
+        "type": "object",
+        "properties": {
+            "id": { "type": "string" },
+            "title": { "type": "string|null" },
+            "artist": { "type": "string|null" },
+            "bpm": { "type": "number|null" },
+            "key": { "type": "string|null" },
+        },
+    })
+}

@@ -384,3 +384,104 @@ async fn handle_track_cue_delete(
         Err(e) => db_error(e),
     }
 }
+
+// --- describe ---
+
+use crate::describe::{describe_command, flag, mutation_result_schema};
+
+pub(crate) fn describe(action: &str) -> Option<serde_json::Value> {
+    Some(match action {
+        "cues list" => describe_command(
+            "tracks cues list",
+            &[flag("track_id", "string", true, "Track ID")],
+            &serde_json::json!({
+                "type": "array", "items": cue_schema(),
+            }),
+            &["rbx tracks cues list TRACK_ID"],
+        ),
+        "cues add" => describe_command(
+            "tracks cues add",
+            &[
+                flag("track_id", "string", true, "Track ID"),
+                flag("msec", "integer", true, "Position in milliseconds"),
+                flag(
+                    "--kind",
+                    "string",
+                    false,
+                    "Cue type: 'memory' (default) or 'hot'",
+                ),
+                flag(
+                    "--slot",
+                    "integer",
+                    false,
+                    "Hot cue slot (1-8, required for hot cues)",
+                ),
+                flag("--comment", "string", false, "Cue comment/name"),
+                flag(
+                    "--execute",
+                    "bool",
+                    false,
+                    "Actually apply the change (default: dry-run)",
+                ),
+            ],
+            &mutation_result_schema("tracks.cues.add"),
+            &[
+                "rbx tracks cues add TRACK_ID 12345",
+                "rbx tracks cues add TRACK_ID 12345 --kind hot --slot 1 --comment 'Drop' --execute",
+            ],
+        ),
+        "cues update" => describe_command(
+            "tracks cues update",
+            &[
+                flag("cue_id", "string", true, "Cue ID"),
+                flag("--msec", "integer", false, "New position in milliseconds"),
+                flag("--comment", "string", false, "New comment"),
+                flag(
+                    "--execute",
+                    "bool",
+                    false,
+                    "Actually apply the change (default: dry-run)",
+                ),
+            ],
+            &mutation_result_schema("tracks.cues.update"),
+            &[
+                "rbx tracks cues update CUE_ID --msec 15000 --comment 'Verse'",
+                "rbx tracks cues update CUE_ID --comment 'Chorus' --execute",
+            ],
+        ),
+        "cues delete" => describe_command(
+            "tracks cues delete",
+            &[
+                flag("cue_id", "string", true, "Cue ID"),
+                flag(
+                    "--execute",
+                    "bool",
+                    false,
+                    "Actually apply the change (default: dry-run)",
+                ),
+            ],
+            &mutation_result_schema("tracks.cues.delete"),
+            &[
+                "rbx tracks cues delete CUE_ID",
+                "rbx tracks cues delete CUE_ID --execute",
+            ],
+        ),
+        _ => return None,
+    })
+}
+
+fn cue_schema() -> serde_json::Value {
+    serde_json::json!({
+        "type": "object",
+        "properties": {
+            "id": { "type": "string" },
+            "track_id": { "type": "string" },
+            "kind": { "type": "string", "enum": ["memory", "hot", "other"] },
+            "slot": { "type": "integer|null", "description": "Hot cue slot (1-8), null for memory cues" },
+            "in_msec": { "type": "integer|null", "description": "Cue position in milliseconds" },
+            "out_msec": { "type": "integer|null", "description": "Loop end in milliseconds, null if not a loop" },
+            "color": { "type": "integer|null" },
+            "comment": { "type": "string|null" },
+        },
+    })
+}

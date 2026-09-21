@@ -271,3 +271,66 @@ async fn handle_track_mytag_remove(
         output::EXIT_OK,
     )
 }
+
+// --- describe ---
+
+use crate::describe::{describe_command, flag, mutation_result_schema};
+
+pub(crate) fn describe(action: &str) -> Option<serde_json::Value> {
+    Some(match action {
+        "mytags list" => describe_command(
+            "tracks mytags list",
+            &[flag("track_id", "string", true, "Track ID")],
+            &serde_json::json!({
+                "type": "array", "items": {
+                    "type": "object",
+                    "properties": {
+                        "tag_id": { "type": "string" },
+                        "tag_name": { "type": "string|null" },
+                        "category_name": { "type": "string|null" },
+                    },
+                },
+            }),
+            &["rbx tracks mytags list TRACK_ID"],
+        ),
+        "mytags add" => describe_command(
+            "tracks mytags add",
+            &[
+                flag("track_id", "string", true, "Track ID"),
+                flag("tag_id", "string", true, "My Tag ID"),
+                flag(
+                    "--execute",
+                    "bool",
+                    false,
+                    "Actually apply the change (default: dry-run)",
+                ),
+            ],
+            &mutation_result_schema("tracks.mytags.add"),
+            &[
+                "rbx tracks mytags add TRACK_ID TAG_ID",
+                "rbx tracks mytags add TRACK_ID TAG_ID --execute",
+            ],
+        ),
+        "mytags remove" => describe_command(
+            "tracks mytags remove",
+            &[
+                flag("track_id", "string", true, "Track ID"),
+                flag("tag_id", "string", true, "My Tag ID"),
+                flag(
+                    "--execute",
+                    "bool",
+                    false,
+                    "Actually apply the change (default: dry-run)",
+                ),
+            ],
+            &mutation_result_schema("tracks.mytags.remove"),
+            &[
+                "rbx tracks mytags remove TRACK_ID TAG_ID",
+                "rbx tracks mytags remove TRACK_ID TAG_ID --execute",
+            ],
+        ),
+
+        // playlists
+        _ => return None,
+    })
+}

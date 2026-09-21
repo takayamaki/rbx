@@ -167,3 +167,87 @@ async fn handle_tracks_filter(
         Err(e) => db_error(e),
     }
 }
+
+// --- describe ---
+
+use crate::describe::{describe_command, describe_resource, flag, mutation_result_schema};
+
+/// `rbx describe tracks [action]`. Sub-resources (`cues …`, `mytags …`) describe themselves.
+pub(crate) fn describe(action: Option<&str>) -> Option<serde_json::Value> {
+    Some(match action {
+        None => describe_resource("tracks", &[
+            ("list", "List all tracks (excludes streaming-only)"),
+            ("get", "Get a single track by ID"),
+            ("search", "Search tracks by title or artist name"),
+            ("filter", "Filter tracks by BPM range, key, and/or tag"),
+            ("update", "Update track fields (dry-run by default)"),
+            ("cues list", "List cue points on a track"),
+            ("cues add", "Add a cue point (dry-run by default)"),
+            ("cues update", "Update a cue point (dry-run by default)"),
+            ("cues delete", "Delete a cue point (dry-run by default)"),
+            ("mytags list", "List My Tags assigned to a track"),
+            ("mytags add", "Add a My Tag to a track (dry-run by default)"),
+            ("mytags remove", "Remove a My Tag from a track (dry-run by default)"),
+        ]),
+        Some("list") => describe_command("tracks list", &[], &serde_json::json!({
+            "type": "array", "items": track_schema(),
+        }), &["rbx tracks list"]),
+        Some("get") => describe_command("tracks get", &[
+            flag("id", "string", true, "Track ID (from djmdContent.ID)"),
+        ], &track_schema(), &["rbx tracks get 12345"]),
+        Some("search") => describe_command("tracks search", &[
+            flag("query", "string", true, "Search term (matched against title and artist)"),
+        ], &serde_json::json!({
+            "type": "array", "items": track_schema(),
+        }), &["rbx tracks search 'Butterfly'"]),
+        Some("filter") => describe_command("tracks filter", &[
+            flag("--bpm-min", "number", false, "Minimum BPM (inclusive)"),
+            flag("--bpm-max", "number", false, "Maximum BPM (inclusive)"),
+            flag("--key", "string", false, "Musical key (e.g. '8A')"),
+            flag("--tag", "string", false, "My Tag ID to filter by"),
+        ], &serde_json::json!({
+            "type": "array", "items": track_schema(),
+        }), &[
+            "rbx tracks filter --bpm-min 125 --bpm-max 135",
+            "rbx tracks filter --key 8A --tag TAG_ID",
+            "rbx tracks filter --bpm-min 120 --bpm-max 140 --key 8A",
+        ]),
+        Some("update") => describe_command("tracks update", &[
+            flag("id", "string", true, "Track ID"),
+            flag("--title", "string", false, "Track title"),
+            flag("--artist", "string", false, "Artist name (resolved or created in djmdArtist; \"\" clears)"),
+            flag("--genre", "string", false, "Genre name (resolved or created in djmdGenre; \"\" clears)"),
+            flag("--album", "string", false, "Album name (resolved or created in djmdAlbum; \"\" clears)"),
+            flag("--track-no", "integer", false, "Track number within the disc"),
+            flag("--disc-no", "integer", false, "Disc number"),
+            flag("--year", "integer", false, "Release year"),
+            flag("--path", "string", false, "Full file path as rekordbox stores it (FolderPath; FileNameL follows its basename)"),
+            flag("--bpm", "number", false, "BPM as decimal (e.g. 128.0)"),
+            flag("--key", "string", false, "Musical key (e.g. '8A', '1B')"),
+            flag("--rating", "integer", false, "Rating (0-5)"),
+            flag("--comment", "string", false, "Comment text"),
+            flag("--execute", "bool", false, "Actually apply the change (default: dry-run)"),
+        ], &mutation_result_schema("tracks.update"), &[
+            "rbx tracks update TRACK_ID --title 'New Title' --bpm 128.0",
+            "rbx tracks update TRACK_ID --artist 'Artist' --key '8A' --execute",
+        ]),
+        Some(a) if a.starts_with("cues ") => return cues::describe(a),
+        Some(a) if a.starts_with("mytags ") => return mytags::describe(a),
+        _ => return None,
+    })
+}
+
+fn track_schema() -> serde_json::Value {
+    serde_json::json!({
+        "type": "object",
+        "properties": {
+            "id": { "type": "string" },
+            "title": { "type": "string|null" },
+            "artist": { "type": "string|null" },
+            "duration_sec": { "type": "integer|null" },
+            "bpm": { "type": "number|null", "description": "BPM as decimal (e.g. 128.0)" },
+            "key": { "type": "string|null", "description": "Musical key (e.g. '8A', '1B')" },
+            "folder_path": { "type": "string|null" },
+        },
+    })
+}

@@ -563,3 +563,166 @@ async fn handle_playlists_delete(
         Err(e) => db_error(e),
     }
 }
+
+// --- describe ---
+
+use crate::describe::{describe_command, describe_resource, flag, mutation_result_schema};
+
+pub(crate) fn describe(action: Option<&str>) -> Option<serde_json::Value> {
+    Some(match action {
+        None => describe_resource(
+            "playlists",
+            &[
+                ("list", "List all playlists and folders"),
+                ("tracks list", "List tracks in a specific playlist"),
+                (
+                    "tracks add",
+                    "Add a track to a playlist (dry-run by default)",
+                ),
+                (
+                    "tracks remove",
+                    "Remove a track from a playlist (dry-run by default)",
+                ),
+                ("search", "Find playlists containing a specific track"),
+                ("create", "Create a new playlist (dry-run by default)"),
+                ("delete", "Delete a playlist (dry-run by default)"),
+            ],
+        ),
+        Some("list") => describe_command(
+            "playlists list",
+            &[],
+            &serde_json::json!({
+                "type": "array", "items": playlist_schema(),
+            }),
+            &["rbx playlists list"],
+        ),
+        Some("tracks list") => describe_command(
+            "playlists tracks list",
+            &[flag("playlist_id", "string", true, "Playlist ID")],
+            &serde_json::json!({
+                "type": "array", "items": playlist_track_schema(),
+            }),
+            &["rbx playlists tracks list PLAYLIST_ID"],
+        ),
+        Some("tracks add") => describe_command(
+            "playlists tracks add",
+            &[
+                flag("playlist_id", "string", true, "Playlist ID"),
+                flag("track_id", "string", true, "Track ID"),
+                flag(
+                    "--execute",
+                    "bool",
+                    false,
+                    "Actually apply the change (default: dry-run)",
+                ),
+            ],
+            &mutation_result_schema("playlists.tracks.add"),
+            &[
+                "rbx playlists tracks add PLAYLIST_ID TRACK_ID",
+                "rbx playlists tracks add PLAYLIST_ID TRACK_ID --execute",
+            ],
+        ),
+        Some("tracks remove") => describe_command(
+            "playlists tracks remove",
+            &[
+                flag("playlist_id", "string", true, "Playlist ID"),
+                flag("track_id", "string", true, "Track ID"),
+                flag(
+                    "--execute",
+                    "bool",
+                    false,
+                    "Actually apply the change (default: dry-run)",
+                ),
+            ],
+            &mutation_result_schema("playlists.tracks.remove"),
+            &[
+                "rbx playlists tracks remove PLAYLIST_ID TRACK_ID",
+                "rbx playlists tracks remove PLAYLIST_ID TRACK_ID --execute",
+            ],
+        ),
+        Some("search") => describe_command(
+            "playlists search",
+            &[flag("track_id", "string", true, "Track ID to search for")],
+            &serde_json::json!({
+                "type": "array", "items": {
+                    "type": "object",
+                    "properties": {
+                        "playlist_id": { "type": "string" },
+                        "playlist_name": { "type": "string" },
+                        "track_no": { "type": "integer" },
+                    },
+                },
+            }),
+            &["rbx playlists search TRACK_ID"],
+        ),
+        Some("create") => describe_command(
+            "playlists create",
+            &[
+                flag("name", "string", true, "Playlist name"),
+                flag(
+                    "--parent",
+                    "string",
+                    false,
+                    "Parent folder ID (omit for top-level)",
+                ),
+                flag(
+                    "--execute",
+                    "bool",
+                    false,
+                    "Actually apply the change (default: dry-run)",
+                ),
+            ],
+            &mutation_result_schema("playlists.create"),
+            &[
+                "rbx playlists create 'My Playlist'",
+                "rbx playlists create 'My Playlist' --parent FOLDER_ID --execute",
+            ],
+        ),
+        Some("delete") => describe_command(
+            "playlists delete",
+            &[
+                flag("id", "string", true, "Playlist ID"),
+                flag(
+                    "--execute",
+                    "bool",
+                    false,
+                    "Actually apply the change (default: dry-run)",
+                ),
+            ],
+            &mutation_result_schema("playlists.delete"),
+            &[
+                "rbx playlists delete PLAYLIST_ID",
+                "rbx playlists delete PLAYLIST_ID --execute",
+            ],
+        ),
+
+        // mytags
+        _ => return None,
+    })
+}
+
+fn playlist_schema() -> serde_json::Value {
+    serde_json::json!({
+        "type": "object",
+        "properties": {
+            "id": { "type": "string" },
+            "name": { "type": "string|null" },
+            "kind": { "type": "string", "enum": ["folder", "playlist"] },
+            "parent_id": { "type": "string|null" },
+        },
+    })
+}
+
+fn playlist_track_schema() -> serde_json::Value {
+    serde_json::json!({
+        "type": "object",
+        "properties": {
+            "track_no": { "type": "integer" },
+            "id": { "type": "string" },
+            "title": { "type": "string|null" },
+            "artist": { "type": "string|null" },
+            "bpm": { "type": "number|null" },
+            "key": { "type": "string|null" },
+        },
+    })
+}

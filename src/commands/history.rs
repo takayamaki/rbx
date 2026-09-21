@@ -62,3 +62,60 @@ pub(crate) async fn handle_history(
         }
     }
 }
+
+// --- describe ---
+
+use crate::describe::{describe_command, describe_resource, flag};
+
+pub(crate) fn describe(action: Option<&str>) -> Option<serde_json::Value> {
+    Some(match action {
+        None => describe_resource(
+            "history",
+            &[
+                ("list", "List play history sessions (most recent first)"),
+                ("tracks", "List tracks in a history session"),
+            ],
+        ),
+        Some("list") => describe_command(
+            "history list",
+            &[flag(
+                "--limit",
+                "integer",
+                false,
+                "Max sessions to return (default: 20)",
+            )],
+            &serde_json::json!({
+                "type": "array", "items": {
+                    "type": "object",
+                    "properties": {
+                        "id": { "type": "string" },
+                        "name": { "type": "string" },
+                        "date": { "type": "string" },
+                        "track_count": { "type": "integer" },
+                    },
+                },
+            }),
+            &["rbx history list", "rbx history list --limit 5"],
+        ),
+        Some("tracks") => describe_command(
+            "history tracks",
+            &[flag("id", "string", true, "History session ID")],
+            &serde_json::json!({
+                "type": "array", "items": {
+                    "type": "object",
+                    "properties": {
+                        "id": { "type": "string" },
+                        "title": { "type": "string|null" },
+                        "artist": { "type": "string|null" },
+                        "bpm": { "type": "number|null" },
+                        "key": { "type": "string|null" },
+                    },
+                },
+            }),
+            &["rbx history tracks HISTORY_ID"],
+        ),
+
+        // query
+        _ => return None,
+    })
+}

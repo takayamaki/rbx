@@ -24,13 +24,13 @@ Rust source code.
 | `commands/mytags.rs` | `mytags *` (tag category / tag CRUD) |
 | `commands/history.rs` | `history *` |
 | `commands/query.rs` | `query` (read-only SQL allowlist, `--unsafe-write`) |
-| `describe.rs` | `describe` schema definitions (resources → actions → flags / output schemas) |
+| `describe.rs` | `describe` router and shared builders (`describe_resource`, `describe_command`, `flag`, `mutation_result_schema`). Each command module has its own `describe()` with its flags and output schemas |
 | `db.rs` | master.db connection. Auto-decrypts SQLCipher; falls back to unencrypted DB (for testing) |
 | `helpers.rs` | Native-format helpers: timestamps, USN allocation, numeric IDs |
 | `output.rs` | Structured JSON output helpers. Envelope builders (success/error/mutation) and exit code constants |
 | `playlist_xml.rs` | `masterPlaylists6.xml` node add / remove |
 
-The layout follows the command tree: to change `rbx tracks cues add`, open `commands/tracks/cues.rs`.
+The layout follows the command tree: to change `rbx tracks cues add`, open `commands/tracks/cues.rs`. Its handler, its `describe` entry and its output schema live there together, so a new flag is added in one file.
 
 ## Conventions
 

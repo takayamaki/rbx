@@ -87,3 +87,27 @@ pub(crate) async fn handle_query(
         Err(e) => db_error(e),
     }
 }
+
+// --- describe ---
+
+use crate::describe::{describe_command, flag};
+
+/// `query` has no sub-actions: `describe query` and `describe query <anything>` both describe the command.
+pub(crate) fn describe(_action: Option<&str>) -> Option<serde_json::Value> {
+    Some(
+        describe_command("query", &[
+            flag("sql", "string", true,
+                "SQL to execute. Read-only by default: single SELECT / WITH / PRAGMA / EXPLAIN statement"),
+            flag("--unsafe-write", "bool", false,
+                "Allow arbitrary SQL incl. writes. Bypasses rekordbox invariants \
+                 (USN allocation, timestamp format, numeric IDs, masterPlaylists6.xml sync) — \
+                 prefer dedicated commands"),
+        ], &serde_json::json!({
+            "type": "array",
+            "items": { "type": "object", "description": "Dynamic columns based on query" },
+        }), &[
+            "rbx query 'SELECT ID, Title FROM djmdContent LIMIT 5'",
+            "rbx query 'PRAGMA table_info(djmdContent)'",
+        ])
+    )
+}
