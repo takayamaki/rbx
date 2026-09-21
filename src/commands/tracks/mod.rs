@@ -10,7 +10,7 @@ use crate::commands::db_error;
 use crate::rows::TrackRow;
 use cues::handle_track_cues;
 use mytags::handle_track_mytags;
-use update::{handle_tracks_update, TrackFields};
+use update::{handle_tracks_bulk_update, handle_tracks_update, TrackFields};
 
 pub(crate) const TRACK_QUERY_BASE: &str = "\
     SELECT c.ID as id, c.Title as title, a.Name as artist_name, \
@@ -124,6 +124,9 @@ pub(crate) async fn handle_tracks(
             handle_tracks_update(pool, &id, fields, execute).await
         }
         TracksAction::Mytags { action } => handle_track_mytags(pool, action).await,
+        TracksAction::BulkUpdate { file, execute } => {
+            handle_tracks_bulk_update(pool, &file, execute).await
+        }
         TracksAction::Cues { action } => handle_track_cues(pool, action).await,
     }
 }
@@ -181,6 +184,7 @@ pub(crate) fn describe(action: Option<&str>) -> Option<serde_json::Value> {
             ("search", "Search tracks by title or artist name"),
             ("filter", "Filter tracks by BPM range, key, and/or tag"),
             ("update", "Update track fields (dry-run by default)"),
+            ("bulk-update", "Update many tracks from a JSON plan file (dry-run by default)"),
             ("cues list", "List cue points on a track"),
             ("cues add", "Add a cue point (dry-run by default)"),
             ("cues update", "Update a cue point (dry-run by default)"),
@@ -231,6 +235,18 @@ pub(crate) fn describe(action: Option<&str>) -> Option<serde_json::Value> {
             "rbx tracks update TRACK_ID --title 'New Title' --bpm 128.0",
             "rbx tracks update TRACK_ID --artist 'Artist' --key '8A' --execute",
         ]),
+        Some("bulk-update") => describe_command(
+            "tracks bulk-update",
+            &[
+                flag("file", "string", true, "JSON plan file, or \"-\" for stdin: [{\"id\": \"...\", \"fields\": {...}}, ...]. Field names are the tracks update flags in snake_case (title, artist, genre, album, track_no, disc_no, year, path, bpm, key, rating, comment)"),
+                flag("--execute", "bool", false, "Actually apply the changes (default: dry-run)"),
+            ],
+            &mutation_result_schema("tracks.bulk_update"),
+            &[
+                "rbx tracks bulk-update updates.json",
+                "rbx tracks bulk-update updates.json --execute",
+            ],
+        ),
         Some(a) if a.starts_with("cues ") => return cues::describe(a),
         Some(a) if a.starts_with("mytags ") => return mytags::describe(a),
         _ => return None,

@@ -1,5 +1,6 @@
 use rbx::helpers::{allocate_usns, generate_numeric_id, now_datetime};
 use rbx::output;
+use serde::Deserialize;
 use sqlx::sqlite::SqlitePool;
 use uuid::Uuid;
 
@@ -118,8 +119,10 @@ async fn resolve_key_id(pool: &SqlitePool, key_name: &str) -> Result<Option<Stri
         .map(|r| r.map(|(id,)| id))
 }
 
-/// Fields accepted by `tracks update`. `None` = leave the column alone.
-#[derive(Default)]
+/// Fields accepted by `tracks update` and by each row of `tracks bulk-update`.
+/// `None` = leave the column alone. JSON keys are the flag names in snake_case
+/// (`track_no`, `disc_no`).
+#[derive(Default, Deserialize)]
 pub(crate) struct TrackFields {
     pub(crate) title: Option<String>,
     pub(crate) artist: Option<String>,
@@ -137,18 +140,32 @@ pub(crate) struct TrackFields {
 
 impl TrackFields {
     fn is_empty(&self) -> bool {
-        self.title.is_none()
-            && self.artist.is_none()
-            && self.genre.is_none()
-            && self.album.is_none()
-            && self.track_no.is_none()
-            && self.disc_no.is_none()
-            && self.year.is_none()
-            && self.path.is_none()
-            && self.bpm.is_none()
-            && self.key.is_none()
-            && self.rating.is_none()
-            && self.comment.is_none()
+        self.changes().is_empty()
+    }
+
+    /// The requested changes as JSON, for plans and results.
+    fn changes(&self) -> serde_json::Map<String, serde_json::Value> {
+        let mut changes = serde_json::Map::new();
+        macro_rules! put {
+            ($name:literal, $field:ident) => {
+                if let Some(v) = &self.$field {
+                    changes.insert($name.into(), serde_json::json!(v));
+                }
+            };
+        }
+        put!("title", title);
+        put!("artist", artist);
+        put!("genre", genre);
+        put!("album", album);
+        put!("track_no", track_no);
+        put!("disc_no", disc_no);
+        put!("year", year);
+        put!("path", path);
+        put!("bpm", bpm);
+        put!("key", key);
+        put!("rating", rating);
+        put!("comment", comment);
+        changes
     }
 }
 
@@ -157,31 +174,18 @@ fn file_name_of(path: &str) -> &str {
     path.rsplit(['/', '\\']).next().unwrap_or(path)
 }
 
-pub(crate) async fn handle_tracks_update(
+/// Everything that can be checked without writing: the track exists, at least
+/// one field is set, the key name is known, the rating is in range.
+/// Returns the track's current (title, artist) for the plan.
+async fn validate(
     pool: &SqlitePool,
     track_id: &str,
-    fields: TrackFields,
-    execute: bool,
-) -> (serde_json::Value, i32) {
-    let TrackFields {
-        title,
-        artist,
-        genre,
-        album,
-        track_no,
-        disc_no,
-        year,
-        path,
-        bpm,
-        key,
-        rating,
-        comment,
-    } = &fields;
-    // Verify track exists
-    let (cur_title, cur_artist) = match resolve_track_summary(pool, track_id).await {
+    fields: &TrackFields,
+) -> Result<(String, String), (serde_json::Value, i32)> {
+    let summary = match resolve_track_summary(pool, track_id).await {
         Ok(Some(t)) => t,
         Ok(None) => {
-            return (
+            return Err((
                 output::error(
                     "not_found",
                     output::EXIT_NOT_FOUND,
@@ -189,26 +193,25 @@ pub(crate) async fn handle_tracks_update(
                     Some("Use 'rbx tracks list' to see available tracks"),
                 ),
                 output::EXIT_NOT_FOUND,
-            )
+            ))
         }
-        Err(e) => return db_error(e),
+        Err(e) => return Err(db_error(e)),
     };
 
     if fields.is_empty() {
-        return (
+        return Err((
             output::error("usage", output::EXIT_USAGE,
                 "No fields specified to update",
                 Some("Use --title, --artist, --genre, --album, --track-no, --disc-no, --year, --path, --bpm, --key, --rating, or --comment")),
             output::EXIT_USAGE,
-        );
+        ));
     }
 
-    // Validate key name if provided
-    if let Some(ref k) = key {
+    if let Some(k) = &fields.key {
         match resolve_key_id(pool, k).await {
             Ok(Some(_)) => {}
             Ok(None) => {
-                return (
+                return Err((
                     output::error(
                         "not_found",
                         output::EXIT_NOT_FOUND,
@@ -216,15 +219,15 @@ pub(crate) async fn handle_tracks_update(
                         Some("Use 'rbx query \"SELECT ScaleName FROM djmdKey\"' to see valid keys"),
                     ),
                     output::EXIT_NOT_FOUND,
-                )
+                ))
             }
-            Err(e) => return db_error(e),
+            Err(e) => return Err(db_error(e)),
         }
     }
 
-    if let Some(r) = *rating {
+    if let Some(r) = fields.rating {
         if !(0..=5).contains(&r) {
-            return (
+            return Err((
                 output::error(
                     "validation",
                     output::EXIT_CONFLICT,
@@ -232,185 +235,224 @@ pub(crate) async fn handle_tracks_update(
                     None,
                 ),
                 output::EXIT_CONFLICT,
-            );
+            ));
         }
     }
 
-    let mut changes = serde_json::Map::new();
-    if let Some(v) = title {
-        changes.insert("title".into(), serde_json::json!(v));
-    }
-    if let Some(v) = artist {
-        changes.insert("artist".into(), serde_json::json!(v));
-    }
-    if let Some(v) = genre {
-        changes.insert("genre".into(), serde_json::json!(v));
-    }
-    if let Some(v) = album {
-        changes.insert("album".into(), serde_json::json!(v));
-    }
-    if let Some(v) = track_no {
-        changes.insert("track_no".into(), serde_json::json!(v));
-    }
-    if let Some(v) = disc_no {
-        changes.insert("disc_no".into(), serde_json::json!(v));
-    }
-    if let Some(v) = year {
-        changes.insert("year".into(), serde_json::json!(v));
-    }
-    if let Some(v) = path {
-        changes.insert("path".into(), serde_json::json!(v));
-    }
-    if let Some(v) = bpm {
-        changes.insert("bpm".into(), serde_json::json!(v));
-    }
-    if let Some(v) = key {
-        changes.insert("key".into(), serde_json::json!(v));
-    }
-    if let Some(v) = rating {
-        changes.insert("rating".into(), serde_json::json!(v));
-    }
-    if let Some(v) = comment {
-        changes.insert("comment".into(), serde_json::json!(v));
-    }
+    Ok(summary)
+}
 
-    let plan = serde_json::json!({
-        "action": "update_track",
-        "track": { "id": track_id, "title": cur_title, "artist": cur_artist },
-        "changes": serde_json::Value::Object(changes.clone()),
-    });
-
-    if !execute {
-        return (
-            output::mutation_dry_run("tracks.update", plan, "Add --execute to apply"),
-            output::EXIT_OK,
-        );
-    }
-
-    // Resolve FK values before building the query
-    let artist_id = if let Some(v) = artist {
-        match resolve_fk(
-            v,
-            |n| async move { resolve_or_create_artist(pool, &n).await },
-        )
-        .await
-        {
-            Ok(id) => Some(id),
-            Err(e) => return db_error(e),
-        }
-    } else {
-        None
+/// Writes the fields of one validated track. Artist / genre / album names are
+/// resolved or created first.
+async fn apply(pool: &SqlitePool, track_id: &str, fields: &TrackFields) -> Result<(), sqlx::Error> {
+    let artist_id = match &fields.artist {
+        Some(v) => Some(
+            resolve_fk(
+                v,
+                |n| async move { resolve_or_create_artist(pool, &n).await },
+            )
+            .await?,
+        ),
+        None => None,
+    };
+    let genre_id = match &fields.genre {
+        Some(v) => Some(
+            resolve_fk(
+                v,
+                |n| async move { resolve_or_create_genre(pool, &n).await },
+            )
+            .await?,
+        ),
+        None => None,
+    };
+    let album_id = match &fields.album {
+        Some(v) => Some(
+            resolve_fk(
+                v,
+                |n| async move { resolve_or_create_album(pool, &n).await },
+            )
+            .await?,
+        ),
+        None => None,
+    };
+    let key_id = match &fields.key {
+        // validated: the key name exists
+        Some(v) => resolve_key_id(pool, v).await?,
+        None => None,
     };
 
-    let genre_id = if let Some(v) = genre {
-        match resolve_fk(
-            v,
-            |n| async move { resolve_or_create_genre(pool, &n).await },
-        )
-        .await
-        {
-            Ok(id) => Some(id),
-            Err(e) => return db_error(e),
-        }
-    } else {
-        None
-    };
-
-    let album_id = if let Some(v) = album {
-        match resolve_fk(
-            v,
-            |n| async move { resolve_or_create_album(pool, &n).await },
-        )
-        .await
-        {
-            Ok(id) => Some(id),
-            Err(e) => return db_error(e),
-        }
-    } else {
-        None
-    };
-
-    let key_id = if let Some(v) = key {
-        match resolve_key_id(pool, v).await {
-            Ok(Some(id)) => Some(id),
-            _ => unreachable!(),
-        }
-    } else {
-        None
-    };
-
-    // Execute individual UPDATEs per field
     let now = now_datetime();
-    let mut errors = Vec::new();
-
     macro_rules! update_field {
         ($col:expr, $val:expr) => {
             let sql = format!(
                 "UPDATE djmdContent SET {} = ?, updated_at = ? WHERE ID = ?",
                 $col
             );
-            if let Err(e) = sqlx::query(&sql)
+            sqlx::query(&sql)
                 .bind($val)
                 .bind(&now)
                 .bind(track_id)
                 .execute(pool)
-                .await
-            {
-                errors.push(e.to_string());
-            }
+                .await?;
         };
     }
 
-    if let Some(v) = title {
+    if let Some(v) = &fields.title {
         update_field!("Title", v);
     }
-    if let Some(ref v) = artist_id {
+    if let Some(v) = &artist_id {
         update_field!("ArtistID", v);
     }
-    if let Some(ref v) = genre_id {
+    if let Some(v) = &genre_id {
         update_field!("GenreID", v);
     }
-    if let Some(ref v) = album_id {
+    if let Some(v) = &album_id {
         update_field!("AlbumID", v);
     }
-    if let Some(v) = track_no {
+    if let Some(v) = fields.track_no {
         update_field!("TrackNo", v);
     }
-    if let Some(v) = disc_no {
+    if let Some(v) = fields.disc_no {
         update_field!("DiscNo", v);
     }
-    if let Some(v) = year {
+    if let Some(v) = fields.year {
         update_field!("ReleaseYear", v);
     }
-    if let Some(v) = path {
+    if let Some(v) = &fields.path {
         update_field!("FolderPath", v);
         update_field!("FileNameL", file_name_of(v));
     }
-    if let Some(v) = bpm {
+    if let Some(v) = fields.bpm {
         let bpm_int = (v * 100.0) as i32;
-        update_field!("BPM", &bpm_int);
+        update_field!("BPM", bpm_int);
     }
-    if let Some(ref v) = key_id {
+    if let Some(v) = &key_id {
         update_field!("KeyID", v);
     }
-    if let Some(v) = rating {
+    if let Some(v) = fields.rating {
         update_field!("Rating", v);
     }
-    if let Some(v) = comment {
+    if let Some(v) = &fields.comment {
         update_field!("Commnt", v);
     }
+    Ok(())
+}
 
-    if !errors.is_empty() {
-        return db_error(sqlx::Error::Protocol(errors.join("; ")));
+pub(crate) async fn handle_tracks_update(
+    pool: &SqlitePool,
+    track_id: &str,
+    fields: TrackFields,
+    execute: bool,
+) -> (serde_json::Value, i32) {
+    let (cur_title, cur_artist) = match validate(pool, track_id, &fields).await {
+        Ok(t) => t,
+        Err(e) => return e,
+    };
+    let track = serde_json::json!({ "id": track_id, "title": cur_title, "artist": cur_artist });
+    let changes = serde_json::Value::Object(fields.changes());
+
+    if !execute {
+        let plan = serde_json::json!({
+            "action": "update_track",
+            "track": track,
+            "changes": changes,
+        });
+        return (
+            output::mutation_dry_run("tracks.update", plan, "Add --execute to apply"),
+            output::EXIT_OK,
+        );
     }
 
+    if let Err(e) = apply(pool, track_id, &fields).await {
+        return db_error(e);
+    }
     (
         output::mutation_done(
             "tracks.update",
-            serde_json::json!({
-                "track": { "id": track_id, "title": cur_title, "artist": cur_artist },
-                "changes": serde_json::Value::Object(changes),
-            }),
+            serde_json::json!({ "track": track, "changes": changes }),
+        ),
+        output::EXIT_OK,
+    )
+}
+
+// --- bulk-update ---
+
+/// One row of a `tracks bulk-update` plan.
+#[derive(Deserialize)]
+struct BulkRow {
+    id: String,
+    fields: TrackFields,
+}
+
+fn read_plan(file: &str) -> Result<Vec<BulkRow>, (serde_json::Value, i32)> {
+    let text = std::fs::read_to_string(file).map_err(|e| {
+        (
+            output::error(
+                "usage",
+                output::EXIT_USAGE,
+                &format!("Cannot read plan file {}: {}", file, e),
+                Some(
+                    "Pass a JSON file: [{\"id\": \"...\", \"fields\": {\"title\": \"...\"}}, ...]",
+                ),
+            ),
+            output::EXIT_USAGE,
+        )
+    })?;
+    serde_json::from_str(&text).map_err(|e| {
+        (
+            output::error(
+                "usage",
+                output::EXIT_USAGE,
+                &format!("Invalid plan JSON: {}", e),
+                Some("Expected an array of {\"id\": \"...\", \"fields\": {...}}; field names are the tracks update flags in snake_case"),
+            ),
+            output::EXIT_USAGE,
+        )
+    })
+}
+
+pub(crate) async fn handle_tracks_bulk_update(
+    pool: &SqlitePool,
+    file: &str,
+    execute: bool,
+) -> (serde_json::Value, i32) {
+    let rows = match read_plan(file) {
+        Ok(r) => r,
+        Err(e) => return e,
+    };
+
+    let mut items = Vec::with_capacity(rows.len());
+    for row in &rows {
+        match validate(pool, &row.id, &row.fields).await {
+            Ok((title, artist)) => items.push(serde_json::json!({
+                "track": { "id": row.id, "title": title, "artist": artist },
+                "changes": serde_json::Value::Object(row.fields.changes()),
+            })),
+            Err(e) => return e,
+        }
+    }
+
+    if !execute {
+        let plan = serde_json::json!({
+            "action": "bulk_update_tracks",
+            "count": rows.len(),
+            "items": items,
+        });
+        return (
+            output::mutation_dry_run("tracks.bulk_update", plan, "Add --execute to apply"),
+            output::EXIT_OK,
+        );
+    }
+
+    for row in &rows {
+        if let Err(e) = apply(pool, &row.id, &row.fields).await {
+            return db_error(e);
+        }
+    }
+    (
+        output::mutation_done(
+            "tracks.bulk_update",
+            serde_json::json!({ "updated": rows.len() }),
         ),
         output::EXIT_OK,
     )

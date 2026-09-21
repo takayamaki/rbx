@@ -582,13 +582,58 @@ fn describe_listings_resolve_to_command_descriptions() {
 }
 
 // --- tracks bulk-update ---
+
+fn write_plan(dir: &tempfile::TempDir, json: &str) -> std::path::PathBuf {
+    let path = dir.path().join("updates.json");
+    std::fs::write(&path, json).unwrap();
+    path
+}
+
 // Order: the everyday case (apply a plan file) first, then dry-run, FK rows
 // shared by many rows, then the ways a plan can be rejected, and stdin last.
 
 /// A plan file with several rows is applied in one run: every row's columns
 /// are updated and the result reports how many rows changed.
 #[tokio::test]
-async fn bulk_update_applies_every_row_in_one_run() {}
+async fn bulk_update_applies_every_row_in_one_run() {
+    let (db_path, dir) = common::setup_db().await;
+    let plan = write_plan(
+        &dir,
+        r#"[
+          {"id": "101", "fields": {"title": "Track One (Remix)", "artist": "Artist A", "year": 2018}},
+          {"id": "102", "fields": {"path": "C:/Music/sub/two renamed.mp3", "comment": "moved"}}
+        ]"#,
+    );
+
+    let assert = rbx_cmd(&db_path)
+        .args(["tracks", "bulk-update", plan.to_str().unwrap(), "--execute"])
+        .assert()
+        .code(0);
+    let json = stdout_json(&assert);
+    assert_eq!(json["kind"], "tracks.bulk_update");
+    assert_eq!(json["dry_run"], false);
+    assert_eq!(json["result"]["updated"], 2);
+
+    let pool = common::open_pool(&db_path).await;
+    let (title, artist_id, year): (String, String, i64) =
+        sqlx::query_as("SELECT Title, ArtistID, ReleaseYear FROM djmdContent WHERE ID = '101'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        (title.as_str(), artist_id.as_str(), year),
+        ("Track One (Remix)", "201", 2018)
+    );
+    let (folder, file, comment): (String, String, String) =
+        sqlx::query_as("SELECT FolderPath, FileNameL, Commnt FROM djmdContent WHERE ID = '102'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        (folder.as_str(), file.as_str(), comment.as_str()),
+        ("C:/Music/sub/two renamed.mp3", "two renamed.mp3", "moved")
+    );
+}
 
 /// Without --execute nothing is written. The plan still validates every row
 /// and lists the artist / genre / album names that would be created, so
