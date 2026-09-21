@@ -852,6 +852,53 @@ async fn bulk_update_rejects_duplicate_ids() {
     );
 }
 
+/// Writes happen in one transaction: when a row fails mid-way (here forced
+/// by a trigger on the second track), the rows already written are rolled
+/// back and the DB is exactly as before.
+#[tokio::test]
+async fn bulk_update_rolls_back_every_row_when_a_write_fails() {
+    let (db_path, dir) = common::setup_db().await;
+    rbx_cmd(&db_path)
+        .args([
+            "query",
+            "CREATE TRIGGER boom BEFORE UPDATE ON djmdContent WHEN NEW.ID = '102' \
+             BEGIN SELECT RAISE(ABORT, 'boom'); END",
+            "--unsafe-write",
+        ])
+        .assert()
+        .code(0);
+    let plan = write_plan(
+        &dir,
+        r#"[
+          {"id": "101", "fields": {"title": "Written first", "artist": "Rolled Back Artist"}},
+          {"id": "102", "fields": {"title": "Fails"}}
+        ]"#,
+    );
+
+    let assert = rbx_cmd(&db_path)
+        .args(["tracks", "bulk-update", plan.to_str().unwrap(), "--execute"])
+        .assert()
+        .code(1);
+    let json = stdout_json(&assert);
+    assert_eq!(json["error"]["category"], "database");
+
+    let pool = common::open_pool(&db_path).await;
+    let (title, artist_count, counter): (String, i64, i64) = sqlx::query_as(
+        "SELECT (SELECT Title FROM djmdContent WHERE ID = '101'), \
+                (SELECT COUNT(*) FROM djmdArtist WHERE Name = 'Rolled Back Artist'), \
+                (SELECT int_1 FROM agentRegistry WHERE registry_id = 'localUpdateCount')",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(title, "Track One", "the first row must be rolled back");
+    assert_eq!(
+        artist_count, 0,
+        "the FK row created for the first row must be rolled back"
+    );
+    assert_eq!(counter, 1000, "the USN counter must be rolled back");
+}
+
 /// `-` reads the plan from stdin.
 #[tokio::test]
 async fn bulk_update_reads_the_plan_from_stdin() {

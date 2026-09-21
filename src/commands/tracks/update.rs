@@ -614,11 +614,22 @@ pub(crate) async fn handle_tracks_bulk_update(
         Ok(c) => c,
         Err(e) => return db_error(e),
     };
+    // One transaction for the whole batch: a failure on any row leaves the DB
+    // (rows, FK rows, USN counter) exactly as it was. The pool has a single
+    // connection, so BEGIN / COMMIT run on the same connection as the writes.
+    if let Err(e) = sqlx::query("BEGIN").execute(pool).await {
+        return db_error(e);
+    }
     let mut cache = FkCache::default();
     for row in &rows {
         if let Err(e) = apply(pool, &row.id, &row.fields, &mut cache).await {
+            sqlx::query("ROLLBACK").execute(pool).await.ok();
             return db_error(e);
         }
+    }
+    if let Err(e) = sqlx::query("COMMIT").execute(pool).await {
+        sqlx::query("ROLLBACK").execute(pool).await.ok();
+        return db_error(e);
     }
     (
         output::mutation_done(
