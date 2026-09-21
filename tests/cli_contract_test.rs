@@ -580,3 +580,42 @@ fn describe_listings_resolve_to_command_descriptions() {
         }
     }
 }
+
+// --- tracks bulk-update ---
+// Order: the everyday case (apply a plan file) first, then dry-run, FK rows
+// shared by many rows, then the ways a plan can be rejected, and stdin last.
+
+/// A plan file with several rows is applied in one run: every row's columns
+/// are updated and the result reports how many rows changed.
+#[tokio::test]
+async fn bulk_update_applies_every_row_in_one_run() {}
+
+/// Without --execute nothing is written. The plan still validates every row
+/// and lists the artist / genre / album names that would be created, so
+/// typos in a plan show up before anything is applied.
+#[tokio::test]
+async fn bulk_update_dry_run_writes_nothing_and_lists_rows_to_create() {}
+
+/// The same new artist name on many rows creates exactly one djmdArtist row
+/// (in native format) and every row points at it.
+#[tokio::test]
+async fn bulk_update_creates_a_shared_artist_row_once() {}
+
+/// One unknown track ID rejects the whole batch: nothing is written and the
+/// error lists every bad row by index and id.
+#[tokio::test]
+async fn bulk_update_rejects_the_whole_batch_when_a_track_is_missing() {}
+
+/// A field name that is not a `tracks update` flag (e.g. `trackNo`) is a
+/// usage error, so a plan generator with the wrong key names fails loudly.
+#[tokio::test]
+async fn bulk_update_rejects_unknown_field_names() {}
+
+/// The same track ID twice in one plan is a conflict, not last-wins: it is
+/// almost always a bug in the plan generator.
+#[tokio::test]
+async fn bulk_update_rejects_duplicate_ids() {}
+
+/// `-` reads the plan from stdin.
+#[tokio::test]
+async fn bulk_update_reads_the_plan_from_stdin() {}
