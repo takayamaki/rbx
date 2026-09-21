@@ -639,7 +639,50 @@ async fn bulk_update_applies_every_row_in_one_run() {
 /// and lists the artist / genre / album names that would be created, so
 /// typos in a plan show up before anything is applied.
 #[tokio::test]
-async fn bulk_update_dry_run_writes_nothing_and_lists_rows_to_create() {}
+async fn bulk_update_dry_run_writes_nothing_and_lists_rows_to_create() {
+    let (db_path, dir) = common::setup_db().await;
+    let plan = write_plan(
+        &dir,
+        r#"[
+          {"id": "101", "fields": {"artist": "Brand New Artist", "genre": "Anime"}},
+          {"id": "102", "fields": {"artist": "Brand New Artist", "album": "New Album"}}
+        ]"#,
+    );
+
+    let assert = rbx_cmd(&db_path)
+        .args(["tracks", "bulk-update", plan.to_str().unwrap()])
+        .assert()
+        .code(0);
+    let json = stdout_json(&assert);
+    assert_eq!(json["kind"], "tracks.bulk_update");
+    assert_eq!(json["dry_run"], true);
+    assert_eq!(json["plan"]["count"], 2);
+    assert_eq!(
+        json["plan"]["creates"]["artists"],
+        serde_json::json!(["Brand New Artist"])
+    );
+    assert_eq!(json["plan"]["creates"]["genres"], serde_json::json!([]));
+    assert_eq!(
+        json["plan"]["creates"]["albums"],
+        serde_json::json!(["New Album"])
+    );
+    assert_eq!(json["next_step"], "Add --execute to apply");
+
+    let pool = common::open_pool(&db_path).await;
+    let (artist_id,): (String,) =
+        sqlx::query_as("SELECT ArtistID FROM djmdContent WHERE ID = '101'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(artist_id, "201", "dry-run must not touch the track");
+    let (artists, albums): (i64, i64) = sqlx::query_as(
+        "SELECT (SELECT COUNT(*) FROM djmdArtist WHERE Name = 'Brand New Artist'),                 (SELECT COUNT(*) FROM djmdAlbum)",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!((artists, albums), (0, 0), "dry-run must not create FK rows");
+}
 
 /// The same new artist name on many rows creates exactly one djmdArtist row
 /// (in native format) and every row points at it.

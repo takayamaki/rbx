@@ -411,6 +411,58 @@ fn read_plan(file: &str) -> Result<Vec<BulkRow>, (serde_json::Value, i32)> {
     })
 }
 
+/// Names in `names` that have no row in `table` yet (sorted, deduplicated).
+/// This is what `apply` would create; the dry-run plan lists them so that a
+/// typo shows up as an unexpected new artist / genre / album.
+async fn missing_names<'a>(
+    pool: &SqlitePool,
+    table: &str,
+    names: impl Iterator<Item = &'a str>,
+) -> Result<Vec<String>, sqlx::Error> {
+    let sql = format!("SELECT 1 FROM {} WHERE Name = ?", table);
+    let mut missing = std::collections::BTreeSet::new();
+    for name in names.filter(|n| !n.is_empty()) {
+        if missing.contains(name) {
+            continue;
+        }
+        if sqlx::query(&sql)
+            .bind(name)
+            .fetch_optional(pool)
+            .await?
+            .is_none()
+        {
+            missing.insert(name.to_string());
+        }
+    }
+    Ok(missing.into_iter().collect())
+}
+
+/// The artist / genre / album rows the plan would create.
+async fn planned_creates(
+    pool: &SqlitePool,
+    rows: &[BulkRow],
+) -> Result<serde_json::Value, sqlx::Error> {
+    let artists = missing_names(
+        pool,
+        "djmdArtist",
+        rows.iter().filter_map(|r| r.fields.artist.as_deref()),
+    )
+    .await?;
+    let genres = missing_names(
+        pool,
+        "djmdGenre",
+        rows.iter().filter_map(|r| r.fields.genre.as_deref()),
+    )
+    .await?;
+    let albums = missing_names(
+        pool,
+        "djmdAlbum",
+        rows.iter().filter_map(|r| r.fields.album.as_deref()),
+    )
+    .await?;
+    Ok(serde_json::json!({ "artists": artists, "genres": genres, "albums": albums }))
+}
+
 pub(crate) async fn handle_tracks_bulk_update(
     pool: &SqlitePool,
     file: &str,
@@ -433,9 +485,14 @@ pub(crate) async fn handle_tracks_bulk_update(
     }
 
     if !execute {
+        let creates = match planned_creates(pool, &rows).await {
+            Ok(c) => c,
+            Err(e) => return db_error(e),
+        };
         let plan = serde_json::json!({
             "action": "bulk_update_tracks",
             "count": rows.len(),
+            "creates": creates,
             "items": items,
         });
         return (
