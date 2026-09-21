@@ -528,3 +528,55 @@ async fn tracks_update_empty_string_clears_fk_without_creating_row() {
         assert_eq!(count, 0, "{} must not get a row with an empty Name", table);
     }
 }
+
+// --- describe ---
+
+fn describe(args: &[&str]) -> serde_json::Value {
+    let mut cmd = Command::cargo_bin("rbx").unwrap();
+    cmd.env_remove("RBX_DB_PATH").arg("describe").args(args);
+    let assert = cmd.assert().code(0);
+    stdout_json(&assert)
+}
+
+/// `describe` is the only map of the CLI an agent has. Every resource the
+/// root lists must describe itself, and every action a resource lists must
+/// resolve to a command description with an output schema.
+#[test]
+fn describe_listings_resolve_to_command_descriptions() {
+    let root = describe(&[]);
+    let resources = root["resources"].as_array().unwrap();
+    assert!(!resources.is_empty());
+
+    for res in resources {
+        let name = res["name"].as_str().unwrap();
+        let listing = describe(&[name]);
+        assert_eq!(listing["kind"], "describe", "{}: {}", name, listing);
+        if name == "query" {
+            // query has no sub-actions: the resource describes the command itself
+            assert_eq!(listing["command"], "query");
+            continue;
+        }
+        assert_eq!(listing["resource"], name);
+        let actions = listing["actions"].as_array().unwrap();
+        assert!(!actions.is_empty(), "{} lists no actions", name);
+
+        for act in actions {
+            let action = act["name"].as_str().unwrap();
+            let cmd = describe(&[name, action]);
+            assert_eq!(cmd["command"], format!("{} {}", name, action), "{}", cmd);
+            assert!(cmd["flags"].is_array(), "{} {}: no flags", name, action);
+            assert!(
+                cmd["output_schema"].is_object(),
+                "{} {}: no output_schema",
+                name,
+                action
+            );
+            assert!(
+                !cmd["examples"].as_array().unwrap().is_empty(),
+                "{} {}: no examples",
+                name,
+                action
+            );
+        }
+    }
+}
