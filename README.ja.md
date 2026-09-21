@@ -87,6 +87,32 @@ rbx tracks update <id> --bpm 130.0 --execute
                                        # トラック情報更新（実行）
 ```
 
+### tracks bulk-update（一括更新）
+
+JSON のプランで多数のトラックをまとめて更新する。先に全行を検証してから
+1 つのトランザクションで書く（全行成功か、何も書かないか）。
+`tracks update` を 1 曲ずつ呼ぶよりはるかに速い（プロセス起動・SQLCipher の鍵導出・commit が 1 回で済む。5,151 行で 10 分 → 4 秒ほど）。
+
+```sh
+rbx tracks bulk-update updates.json    # 全行を検証してプランを表示（dry-run）
+rbx tracks bulk-update updates.json --execute
+                                       # 1 トランザクションで全行適用
+rbx tracks bulk-update - < updates.json
+                                       # プランを stdin から読む
+```
+
+プランは `{"id", "fields"}` の配列。フィールド名は `tracks update` のフラグ名を snake_case にしたもの:
+
+```json
+[
+  { "id": "123", "fields": { "title": "New Title", "artist": "Artist", "track_no": 1 } },
+  { "id": "456", "fields": { "path": "F:/Music/new name.m4a", "year": 2018 } }
+]
+```
+
+- dry-run のプランには、新しく作られる artist / genre / album の名前が `plan.creates` に並ぶ。書く前にタイポに気づける
+- 不正な行（存在しないトラック・不明なキー・不明なフィールド名・ID の重複）が 1 つでもあればプラン全体を拒否する。不正な行は `error.errors` にプラン内の index 付きで全部列挙される
+
 ### tracks cues（キューポイント操作）
 
 ```sh

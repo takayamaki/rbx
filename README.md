@@ -95,6 +95,37 @@ rbx tracks update <id> --bpm 130.0 --execute
                                        # update track fields (apply)
 ```
 
+### tracks bulk-update
+
+Update many tracks from one JSON plan. The whole plan is validated first,
+then written in a single transaction (all rows or none).
+Much faster than calling `tracks update` once per track: one process, one
+SQLCipher key derivation, one commit (5,151 rows: about 4 s instead of 10 min).
+
+```sh
+rbx tracks bulk-update updates.json    # validate every row and show the plan (dry-run)
+rbx tracks bulk-update updates.json --execute
+                                       # apply all rows in one transaction
+rbx tracks bulk-update - < updates.json
+                                       # read the plan from stdin
+```
+
+The plan is an array of `{"id", "fields"}`. Field names are the `tracks update`
+flags in snake_case:
+
+```json
+[
+  { "id": "123", "fields": { "title": "New Title", "artist": "Artist", "track_no": 1 } },
+  { "id": "456", "fields": { "path": "F:/Music/new name.m4a", "year": 2018 } }
+]
+```
+
+- The dry-run plan lists the artist / genre / album names that would be
+  created under `plan.creates`, so a typo shows up before anything is written.
+- A bad row (unknown track, unknown key, unknown field name, duplicate ID)
+  rejects the whole plan. Every bad row is listed under `error.errors`
+  with its index in the plan.
+
 ### tracks cues
 
 ```sh

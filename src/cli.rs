@@ -122,6 +122,14 @@ pub(crate) enum TracksAction {
         #[arg(long)]
         execute: bool,
     },
+    /// Update many tracks from a JSON plan file (dry-run by default)
+    BulkUpdate {
+        /// Plan file: [{"id": "...", "fields": {"title": "...", ...}}, ...]. "-" reads stdin
+        file: String,
+        /// Actually apply the changes
+        #[arg(long)]
+        execute: bool,
+    },
     /// Manage My Tags on a track
     Mytags {
         #[command(subcommand)]
@@ -306,6 +314,7 @@ pub(crate) fn needs_write(cmd: &Commands) -> bool {
             ..
         } | Commands::Tracks {
             action: TracksAction::Update { execute: true, .. }
+                | TracksAction::BulkUpdate { execute: true, .. }
                 | TracksAction::Mytags {
                     action: TrackMytagsAction::Add { execute: true, .. }
                         | TrackMytagsAction::Remove { execute: true, .. },
