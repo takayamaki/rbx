@@ -8,8 +8,11 @@ use sqlx::{Column, FromRow, Row as _};
 use uuid::Uuid;
 
 #[derive(Parser)]
-#[command(name = "rbx", about = "CLI tool for rekordbox master.db",
-    after_help = "For machine-readable schema info, use: rbx describe [resource] [action]")]
+#[command(
+    name = "rbx",
+    about = "CLI tool for rekordbox master.db",
+    after_help = "For machine-readable schema info, use: rbx describe [resource] [action]"
+)]
 struct Cli {
     /// Path to rekordbox master.db
     #[arg(long, env = "RBX_DB_PATH")]
@@ -337,7 +340,11 @@ struct PlaylistRow {
 
 impl PlaylistRow {
     fn to_json(&self) -> serde_json::Value {
-        let kind = if self.attribute == Some(1) { "folder" } else { "playlist" };
+        let kind = if self.attribute == Some(1) {
+            "folder"
+        } else {
+            "playlist"
+        };
         serde_json::json!({
             "id": self.id,
             "name": self.name,
@@ -381,7 +388,11 @@ struct MyTagRow {
 
 impl MyTagRow {
     fn to_json(&self) -> serde_json::Value {
-        let kind = if self.attribute == Some(1) { "category" } else { "tag" };
+        let kind = if self.attribute == Some(1) {
+            "category"
+        } else {
+            "tag"
+        };
         serde_json::json!({
             "id": self.id,
             "seq": self.seq,
@@ -445,16 +456,18 @@ impl CueRow {
     fn to_json(&self) -> serde_json::Value {
         let kind_str = match self.kind {
             Some(0) => "memory",
-            Some(k @ 1..=8) => return serde_json::json!({
-                "id": self.id,
-                "track_id": self.content_id,
-                "kind": "hot",
-                "slot": k,
-                "in_msec": self.in_msec,
-                "out_msec": self.out_msec.filter(|&v| v >= 0),
-                "color": self.color.filter(|&v| v >= 0),
-                "comment": self.comment,
-            }),
+            Some(k @ 1..=8) => {
+                return serde_json::json!({
+                    "id": self.id,
+                    "track_id": self.content_id,
+                    "kind": "hot",
+                    "slot": k,
+                    "in_msec": self.in_msec,
+                    "out_msec": self.out_msec.filter(|&v| v >= 0),
+                    "color": self.color.filter(|&v| v >= 0),
+                    "comment": self.comment,
+                })
+            }
             _ => "other",
         };
         serde_json::json!({
@@ -486,42 +499,58 @@ const TRACK_FILTER_LOCAL: &str = "\
     AND c.Title IS NOT NULL AND c.Title != ''";
 
 fn needs_write(cmd: &Commands) -> bool {
-    matches!(cmd, Commands::Query { unsafe_write: true, .. }
-        | Commands::Tracks { action: TracksAction::Update { execute: true, .. }
-            | TracksAction::Mytags {
-                action: TrackMytagsAction::Add { execute: true, .. }
-                      | TrackMytagsAction::Remove { execute: true, .. },
-            }
-            | TracksAction::Cues {
-                action: TrackCuesAction::Add { execute: true, .. }
-                      | TrackCuesAction::Update { execute: true, .. }
-                      | TrackCuesAction::Delete { execute: true, .. },
-            }}
-        | Commands::Mytags {
+    matches!(
+        cmd,
+        Commands::Query {
+            unsafe_write: true,
+            ..
+        } | Commands::Tracks {
+            action: TracksAction::Update { execute: true, .. }
+                | TracksAction::Mytags {
+                    action: TrackMytagsAction::Add { execute: true, .. }
+                        | TrackMytagsAction::Remove { execute: true, .. },
+                }
+                | TracksAction::Cues {
+                    action: TrackCuesAction::Add { execute: true, .. }
+                        | TrackCuesAction::Update { execute: true, .. }
+                        | TrackCuesAction::Delete { execute: true, .. },
+                }
+        } | Commands::Mytags {
             action: MytagsAction::Create { execute: true, .. }
-                  | MytagsAction::Delete { execute: true, .. },
-        }
-        | Commands::Playlists {
+                | MytagsAction::Delete { execute: true, .. },
+        } | Commands::Playlists {
             action: PlaylistsAction::Create { execute: true, .. }
-                  | PlaylistsAction::Delete { execute: true, .. }
-                  | PlaylistsAction::Tracks { action: PlaylistTracksAction::Add { execute: true, .. }
-                      | PlaylistTracksAction::Remove { execute: true, .. } },
+                | PlaylistsAction::Delete { execute: true, .. }
+                | PlaylistsAction::Tracks {
+                    action: PlaylistTracksAction::Add { execute: true, .. }
+                        | PlaylistTracksAction::Remove { execute: true, .. }
+                },
         }
     )
 }
 
 async fn resolve_tag_name(pool: &SqlitePool, tag_id: &str) -> Result<Option<String>, sqlx::Error> {
     sqlx::query_as::<_, (String,)>(
-        "SELECT Name FROM djmdMyTag WHERE ID = ? AND rb_local_deleted = 0"
-    ).bind(tag_id).fetch_optional(pool).await.map(|r| r.map(|(n,)| n))
+        "SELECT Name FROM djmdMyTag WHERE ID = ? AND rb_local_deleted = 0",
+    )
+    .bind(tag_id)
+    .fetch_optional(pool)
+    .await
+    .map(|r| r.map(|(n,)| n))
 }
 
-async fn resolve_track_summary(pool: &SqlitePool, content_id: &str) -> Result<Option<(String, String)>, sqlx::Error> {
+async fn resolve_track_summary(
+    pool: &SqlitePool,
+    content_id: &str,
+) -> Result<Option<(String, String)>, sqlx::Error> {
     sqlx::query_as::<_, (String, String)>(
         "SELECT c.Title, COALESCE(a.Name, '') \
          FROM djmdContent c LEFT JOIN djmdArtist a ON c.ArtistID = a.ID \
-         WHERE c.ID = ?"
-    ).bind(content_id).fetch_optional(pool).await
+         WHERE c.ID = ?",
+    )
+    .bind(content_id)
+    .fetch_optional(pool)
+    .await
 }
 
 fn db_error(e: sqlx::Error) -> (serde_json::Value, i32) {
@@ -539,7 +568,9 @@ async fn main() {
 
     if matches!(cli.command, Commands::Describe { .. }) {
         let (out, code) = match cli.command {
-            Commands::Describe { resource, action } => (handle_describe(resource, action), output::EXIT_OK),
+            Commands::Describe { resource, action } => {
+                (handle_describe(resource, action), output::EXIT_OK)
+            }
             _ => unreachable!(),
         };
         output::print(&out);
@@ -553,7 +584,9 @@ async fn main() {
         Some(p) => p.clone(),
         None => {
             output::print(&output::error(
-                "config", output::EXIT_CONFIG, "Missing --db path",
+                "config",
+                output::EXIT_CONFIG,
+                "Missing --db path",
                 Some("Set --db or RBX_DB_PATH environment variable"),
             ));
             std::process::exit(output::EXIT_CONFIG);
@@ -565,7 +598,8 @@ async fn main() {
         Ok(p) => p,
         Err(e) => {
             output::print(&output::error(
-                "config", output::EXIT_CONFIG,
+                "config",
+                output::EXIT_CONFIG,
                 &format!("Failed to open database: {}", e),
                 Some("Check that --db points to a valid rekordbox master.db"),
             ));
@@ -597,19 +631,29 @@ async fn handle_tracks(pool: &SqlitePool, action: TracksAction) -> (serde_json::
             match sqlx::query_as::<_, TrackRow>(&sql).fetch_all(pool).await {
                 Ok(rows) => {
                     let items: Vec<_> = rows.iter().map(|r| r.to_json()).collect();
-                    (output::success("tracks", serde_json::Value::Array(items)), output::EXIT_OK)
+                    (
+                        output::success("tracks", serde_json::Value::Array(items)),
+                        output::EXIT_OK,
+                    )
                 }
                 Err(e) => db_error(e),
             }
         }
         TracksAction::Get { id } => {
             let sql = format!("{} WHERE c.ID = ?", TRACK_QUERY_BASE);
-            match sqlx::query_as::<_, TrackRow>(&sql).bind(&id).fetch_optional(pool).await {
+            match sqlx::query_as::<_, TrackRow>(&sql)
+                .bind(&id)
+                .fetch_optional(pool)
+                .await
+            {
                 Ok(Some(row)) => (output::success_one("track", row.to_json()), output::EXIT_OK),
                 Ok(None) => (
-                    output::error("not_found", output::EXIT_NOT_FOUND,
+                    output::error(
+                        "not_found",
+                        output::EXIT_NOT_FOUND,
                         &format!("Track not found: {}", id),
-                        Some("Use 'rbx tracks list' to see available tracks")),
+                        Some("Use 'rbx tracks list' to see available tracks"),
+                    ),
                     output::EXIT_NOT_FOUND,
                 ),
                 Err(e) => db_error(e),
@@ -621,19 +665,57 @@ async fn handle_tracks(pool: &SqlitePool, action: TracksAction) -> (serde_json::
                 TRACK_QUERY_BASE, TRACK_FILTER_LOCAL
             );
             let pattern = format!("%{}%", query);
-            match sqlx::query_as::<_, TrackRow>(&sql).bind(&pattern).fetch_all(pool).await {
+            match sqlx::query_as::<_, TrackRow>(&sql)
+                .bind(&pattern)
+                .fetch_all(pool)
+                .await
+            {
                 Ok(rows) => {
                     let items: Vec<_> = rows.iter().map(|r| r.to_json()).collect();
-                    (output::success("tracks", serde_json::Value::Array(items)), output::EXIT_OK)
+                    (
+                        output::success("tracks", serde_json::Value::Array(items)),
+                        output::EXIT_OK,
+                    )
                 }
                 Err(e) => db_error(e),
             }
         }
-        TracksAction::Filter { bpm_min, bpm_max, key, tag } => {
-            handle_tracks_filter(pool, bpm_min, bpm_max, key, tag).await
-        }
-        TracksAction::Update { id, title, artist, genre, album, track_no, disc_no, year, path, bpm, key, rating, comment, execute } => {
-            let fields = TrackFields { title, artist, genre, album, track_no, disc_no, year, path, bpm, key, rating, comment };
+        TracksAction::Filter {
+            bpm_min,
+            bpm_max,
+            key,
+            tag,
+        } => handle_tracks_filter(pool, bpm_min, bpm_max, key, tag).await,
+        TracksAction::Update {
+            id,
+            title,
+            artist,
+            genre,
+            album,
+            track_no,
+            disc_no,
+            year,
+            path,
+            bpm,
+            key,
+            rating,
+            comment,
+            execute,
+        } => {
+            let fields = TrackFields {
+                title,
+                artist,
+                genre,
+                album,
+                track_no,
+                disc_no,
+                year,
+                path,
+                bpm,
+                key,
+                rating,
+                comment,
+            };
             handle_tracks_update(pool, &id, fields, execute).await
         }
         TracksAction::Mytags { action } => handle_track_mytags(pool, action).await,
@@ -644,8 +726,11 @@ async fn handle_tracks(pool: &SqlitePool, action: TracksAction) -> (serde_json::
 // --- Handlers: tracks filter ---
 
 async fn handle_tracks_filter(
-    pool: &SqlitePool, bpm_min: Option<f64>, bpm_max: Option<f64>,
-    key: Option<String>, tag: Option<String>,
+    pool: &SqlitePool,
+    bpm_min: Option<f64>,
+    bpm_max: Option<f64>,
+    key: Option<String>,
+    tag: Option<String>,
 ) -> (serde_json::Value, i32) {
     let mut conditions = vec![TRACK_FILTER_LOCAL.to_string()];
     // BPM is stored as int * 100
@@ -669,7 +754,10 @@ async fn handle_tracks_filter(
     match sqlx::query_as::<_, TrackRow>(&sql).fetch_all(pool).await {
         Ok(rows) => {
             let items: Vec<_> = rows.iter().map(|r| r.to_json()).collect();
-            (output::success("tracks", serde_json::Value::Array(items)), output::EXIT_OK)
+            (
+                output::success("tracks", serde_json::Value::Array(items)),
+                output::EXIT_OK,
+            )
         }
         Err(e) => db_error(e),
     }
@@ -680,11 +768,19 @@ async fn handle_tracks_filter(
 async fn handle_track_cues(pool: &SqlitePool, action: TrackCuesAction) -> (serde_json::Value, i32) {
     match action {
         TrackCuesAction::List { track_id } => {
-            if resolve_track_summary(pool, &track_id).await.ok().flatten().is_none() {
+            if resolve_track_summary(pool, &track_id)
+                .await
+                .ok()
+                .flatten()
+                .is_none()
+            {
                 return (
-                    output::error("not_found", output::EXIT_NOT_FOUND,
+                    output::error(
+                        "not_found",
+                        output::EXIT_NOT_FOUND,
                         &format!("Track not found: {}", track_id),
-                        Some("Use 'rbx tracks list' to see available tracks")),
+                        Some("Use 'rbx tracks list' to see available tracks"),
+                    ),
                     output::EXIT_NOT_FOUND,
                 );
             }
@@ -692,21 +788,36 @@ async fn handle_track_cues(pool: &SqlitePool, action: TrackCuesAction) -> (serde
                 "SELECT ID as id, ContentID as content_id, InMsec as in_msec, \
                  OutMsec as out_msec, Kind as kind, Color as color, Comment as comment \
                  FROM djmdCue WHERE ContentID = ? AND rb_local_deleted = 0 \
-                 ORDER BY Kind, InMsec"
-            ).bind(&track_id).fetch_all(pool).await {
+                 ORDER BY Kind, InMsec",
+            )
+            .bind(&track_id)
+            .fetch_all(pool)
+            .await
+            {
                 Ok(rows) => {
                     let items: Vec<_> = rows.iter().map(|r| r.to_json()).collect();
-                    (output::success("track_cues", serde_json::Value::Array(items)), output::EXIT_OK)
+                    (
+                        output::success("track_cues", serde_json::Value::Array(items)),
+                        output::EXIT_OK,
+                    )
                 }
                 Err(e) => db_error(e),
             }
         }
-        TrackCuesAction::Add { track_id, msec, kind, slot, comment, execute } => {
-            handle_track_cue_add(pool, &track_id, msec, &kind, slot, comment, execute).await
-        }
-        TrackCuesAction::Update { cue_id, msec, comment, execute } => {
-            handle_track_cue_update(pool, &cue_id, msec, comment, execute).await
-        }
+        TrackCuesAction::Add {
+            track_id,
+            msec,
+            kind,
+            slot,
+            comment,
+            execute,
+        } => handle_track_cue_add(pool, &track_id, msec, &kind, slot, comment, execute).await,
+        TrackCuesAction::Update {
+            cue_id,
+            msec,
+            comment,
+            execute,
+        } => handle_track_cue_update(pool, &cue_id, msec, comment, execute).await,
         TrackCuesAction::Delete { cue_id, execute } => {
             handle_track_cue_delete(pool, &cue_id, execute).await
         }
@@ -714,17 +825,27 @@ async fn handle_track_cues(pool: &SqlitePool, action: TrackCuesAction) -> (serde
 }
 
 async fn handle_track_cue_add(
-    pool: &SqlitePool, track_id: &str, msec: i64, kind: &str,
-    slot: Option<i32>, comment: Option<String>, execute: bool,
+    pool: &SqlitePool,
+    track_id: &str,
+    msec: i64,
+    kind: &str,
+    slot: Option<i32>,
+    comment: Option<String>,
+    execute: bool,
 ) -> (serde_json::Value, i32) {
     let (title, artist) = match resolve_track_summary(pool, track_id).await {
         Ok(Some(t)) => t,
-        Ok(None) => return (
-            output::error("not_found", output::EXIT_NOT_FOUND,
-                &format!("Track not found: {}", track_id),
-                Some("Use 'rbx tracks list' to see available tracks")),
-            output::EXIT_NOT_FOUND,
-        ),
+        Ok(None) => {
+            return (
+                output::error(
+                    "not_found",
+                    output::EXIT_NOT_FOUND,
+                    &format!("Track not found: {}", track_id),
+                    Some("Use 'rbx tracks list' to see available tracks"),
+                ),
+                output::EXIT_NOT_FOUND,
+            )
+        }
         Err(e) => return db_error(e),
     };
 
@@ -732,34 +853,65 @@ async fn handle_track_cue_add(
         "memory" => 0,
         "hot" => match slot {
             Some(s) if (1..=8).contains(&s) => s,
-            Some(s) => return (
-                output::error("validation", output::EXIT_CONFLICT,
-                    &format!("Hot cue slot must be 1-8, got: {}", s), None),
-                output::EXIT_CONFLICT,
-            ),
-            None => return (
-                output::error("validation", output::EXIT_CONFLICT,
-                    "Hot cue requires --slot (1-8)", None),
-                output::EXIT_CONFLICT,
-            ),
+            Some(s) => {
+                return (
+                    output::error(
+                        "validation",
+                        output::EXIT_CONFLICT,
+                        &format!("Hot cue slot must be 1-8, got: {}", s),
+                        None,
+                    ),
+                    output::EXIT_CONFLICT,
+                )
+            }
+            None => {
+                return (
+                    output::error(
+                        "validation",
+                        output::EXIT_CONFLICT,
+                        "Hot cue requires --slot (1-8)",
+                        None,
+                    ),
+                    output::EXIT_CONFLICT,
+                )
+            }
         },
-        _ => return (
-            output::error("validation", output::EXIT_CONFLICT,
-                &format!("Unknown cue kind: {} (use 'memory' or 'hot')", kind), None),
-            output::EXIT_CONFLICT,
-        ),
+        _ => {
+            return (
+                output::error(
+                    "validation",
+                    output::EXIT_CONFLICT,
+                    &format!("Unknown cue kind: {} (use 'memory' or 'hot')", kind),
+                    None,
+                ),
+                output::EXIT_CONFLICT,
+            )
+        }
     };
 
     // Check for slot conflict on hot cues
     if kind_int >= 1 {
         let existing = sqlx::query_as::<_, (String,)>(
-            "SELECT ID FROM djmdCue WHERE ContentID = ? AND Kind = ? AND rb_local_deleted = 0"
-        ).bind(track_id).bind(kind_int).fetch_optional(pool).await;
+            "SELECT ID FROM djmdCue WHERE ContentID = ? AND Kind = ? AND rb_local_deleted = 0",
+        )
+        .bind(track_id)
+        .bind(kind_int)
+        .fetch_optional(pool)
+        .await;
         if let Ok(Some(_)) = existing {
             return (
-                output::error("conflict", output::EXIT_CONFLICT,
-                    &format!("Hot cue slot {} is already occupied on '{}'", kind_int, title),
-                    Some(&format!("Use 'rbx tracks cues list {}' to see existing cues", track_id))),
+                output::error(
+                    "conflict",
+                    output::EXIT_CONFLICT,
+                    &format!(
+                        "Hot cue slot {} is already occupied on '{}'",
+                        kind_int, title
+                    ),
+                    Some(&format!(
+                        "Use 'rbx tracks cues list {}' to see existing cues",
+                        track_id
+                    )),
+                ),
                 output::EXIT_CONFLICT,
             );
         }
@@ -782,17 +934,24 @@ async fn handle_track_cue_add(
     }
 
     let new_id = match generate_numeric_id(pool, "djmdCue").await {
-        Ok(v) => v, Err(e) => return db_error(e),
+        Ok(v) => v,
+        Err(e) => return db_error(e),
     };
     let new_uuid = Uuid::new_v4().to_string();
     let now = now_datetime();
     let usn = match allocate_usns(pool, 1).await {
-        Ok(v) => v, Err(e) => return db_error(e),
+        Ok(v) => v,
+        Err(e) => return db_error(e),
     };
     let content_uuid: String = match sqlx::query_as::<_, (String,)>(
-        "SELECT COALESCE(UUID, '') FROM djmdContent WHERE ID = ?"
-    ).bind(track_id).fetch_one(pool).await {
-        Ok((u,)) => u, Err(e) => return db_error(e),
+        "SELECT COALESCE(UUID, '') FROM djmdContent WHERE ID = ?",
+    )
+    .bind(track_id)
+    .fetch_one(pool)
+    .await
+    {
+        Ok((u,)) => u,
+        Err(e) => return db_error(e),
     };
     match sqlx::query(
         "INSERT INTO djmdCue (ID, ContentID, InMsec, InFrame, InMpegFrame, InMpegAbs, \
@@ -824,35 +983,55 @@ async fn handle_track_cue_add(
 }
 
 async fn handle_track_cue_update(
-    pool: &SqlitePool, cue_id: &str,
-    msec: Option<i64>, comment: Option<String>, execute: bool,
+    pool: &SqlitePool,
+    cue_id: &str,
+    msec: Option<i64>,
+    comment: Option<String>,
+    execute: bool,
 ) -> (serde_json::Value, i32) {
     let cue = match sqlx::query_as::<_, CueRow>(
         "SELECT ID as id, ContentID as content_id, InMsec as in_msec, \
          OutMsec as out_msec, Kind as kind, Color as color, Comment as comment \
-         FROM djmdCue WHERE ID = ? AND rb_local_deleted = 0"
-    ).bind(cue_id).fetch_optional(pool).await {
+         FROM djmdCue WHERE ID = ? AND rb_local_deleted = 0",
+    )
+    .bind(cue_id)
+    .fetch_optional(pool)
+    .await
+    {
         Ok(Some(c)) => c,
-        Ok(None) => return (
-            output::error("not_found", output::EXIT_NOT_FOUND,
-                &format!("Cue not found: {}", cue_id), None),
-            output::EXIT_NOT_FOUND,
-        ),
+        Ok(None) => {
+            return (
+                output::error(
+                    "not_found",
+                    output::EXIT_NOT_FOUND,
+                    &format!("Cue not found: {}", cue_id),
+                    None,
+                ),
+                output::EXIT_NOT_FOUND,
+            )
+        }
         Err(e) => return db_error(e),
     };
 
     if msec.is_none() && comment.is_none() {
         return (
-            output::error("usage", output::EXIT_USAGE,
+            output::error(
+                "usage",
+                output::EXIT_USAGE,
                 "No fields specified to update",
-                Some("Use --msec or --comment")),
+                Some("Use --msec or --comment"),
+            ),
             output::EXIT_USAGE,
         );
     }
 
     let mut changes = serde_json::Map::new();
-    if let Some(v) = msec { changes.insert("in_msec".into(), serde_json::json!(v)); }
-    if let Some(ref v) = comment { changes.insert("comment".into(), serde_json::json!(v)); }
+    if let Some(v) = msec {
+        changes.insert("in_msec".into(), serde_json::json!(v));
+    }
+    if let Some(ref v) = comment {
+        changes.insert("comment".into(), serde_json::json!(v));
+    }
 
     let plan = serde_json::json!({
         "action": "update_cue",
@@ -869,37 +1048,63 @@ async fn handle_track_cue_update(
 
     let now = now_datetime();
     if let Some(v) = msec {
-        let _ = sqlx::query("UPDATE djmdCue SET InMsec = ?, CueMicrosec = ?, updated_at = ? WHERE ID = ?")
-            .bind(v).bind(v * 1000).bind(&now).bind(cue_id).execute(pool).await;
+        let _ = sqlx::query(
+            "UPDATE djmdCue SET InMsec = ?, CueMicrosec = ?, updated_at = ? WHERE ID = ?",
+        )
+        .bind(v)
+        .bind(v * 1000)
+        .bind(&now)
+        .bind(cue_id)
+        .execute(pool)
+        .await;
     }
     if let Some(ref v) = comment {
         let _ = sqlx::query("UPDATE djmdCue SET Comment = ?, updated_at = ? WHERE ID = ?")
-            .bind(v).bind(&now).bind(cue_id).execute(pool).await;
+            .bind(v)
+            .bind(&now)
+            .bind(cue_id)
+            .execute(pool)
+            .await;
     }
 
     (
-        output::mutation_done("tracks.cues.update", serde_json::json!({
-            "cue": cue.to_json(),
-            "changes": serde_json::Value::Object(changes),
-        })),
+        output::mutation_done(
+            "tracks.cues.update",
+            serde_json::json!({
+                "cue": cue.to_json(),
+                "changes": serde_json::Value::Object(changes),
+            }),
+        ),
         output::EXIT_OK,
     )
 }
 
 async fn handle_track_cue_delete(
-    pool: &SqlitePool, cue_id: &str, execute: bool,
+    pool: &SqlitePool,
+    cue_id: &str,
+    execute: bool,
 ) -> (serde_json::Value, i32) {
     let cue = match sqlx::query_as::<_, CueRow>(
         "SELECT ID as id, ContentID as content_id, InMsec as in_msec, \
          OutMsec as out_msec, Kind as kind, Color as color, Comment as comment \
-         FROM djmdCue WHERE ID = ? AND rb_local_deleted = 0"
-    ).bind(cue_id).fetch_optional(pool).await {
+         FROM djmdCue WHERE ID = ? AND rb_local_deleted = 0",
+    )
+    .bind(cue_id)
+    .fetch_optional(pool)
+    .await
+    {
         Ok(Some(c)) => c,
-        Ok(None) => return (
-            output::error("not_found", output::EXIT_NOT_FOUND,
-                &format!("Cue not found: {}", cue_id), None),
-            output::EXIT_NOT_FOUND,
-        ),
+        Ok(None) => {
+            return (
+                output::error(
+                    "not_found",
+                    output::EXIT_NOT_FOUND,
+                    &format!("Cue not found: {}", cue_id),
+                    None,
+                ),
+                output::EXIT_NOT_FOUND,
+            )
+        }
         Err(e) => return db_error(e),
     };
 
@@ -917,11 +1122,18 @@ async fn handle_track_cue_delete(
 
     let now = now_datetime();
     match sqlx::query("UPDATE djmdCue SET rb_local_deleted = 1, updated_at = ? WHERE ID = ?")
-        .bind(&now).bind(cue_id).execute(pool).await {
+        .bind(&now)
+        .bind(cue_id)
+        .execute(pool)
+        .await
+    {
         Ok(_) => (
-            output::mutation_done("tracks.cues.delete", serde_json::json!({
-                "cue": cue.to_json(),
-            })),
+            output::mutation_done(
+                "tracks.cues.delete",
+                serde_json::json!({
+                    "cue": cue.to_json(),
+                }),
+            ),
             output::EXIT_OK,
         ),
         Err(e) => db_error(e),
@@ -931,9 +1143,11 @@ async fn handle_track_cue_delete(
 // --- Handlers: tracks update ---
 
 async fn resolve_or_create_artist(pool: &SqlitePool, name: &str) -> Result<String, sqlx::Error> {
-    if let Some((id,)) = sqlx::query_as::<_, (String,)>(
-        "SELECT ID FROM djmdArtist WHERE Name = ?"
-    ).bind(name).fetch_optional(pool).await? {
+    if let Some((id,)) = sqlx::query_as::<_, (String,)>("SELECT ID FROM djmdArtist WHERE Name = ?")
+        .bind(name)
+        .fetch_optional(pool)
+        .await?
+    {
         return Ok(id);
     }
     let new_id = generate_numeric_id(pool, "djmdArtist").await?;
@@ -944,17 +1158,27 @@ async fn resolve_or_create_artist(pool: &SqlitePool, name: &str) -> Result<Strin
         "INSERT INTO djmdArtist (ID, Name, SearchStr, UUID, \
          rb_data_status, rb_local_data_status, rb_local_deleted, rb_local_synced, rb_local_usn, \
          created_at, updated_at) \
-         VALUES (?, ?, ?, ?, 0, 0, 0, 0, ?, ?, ?)"
-    ).bind(&new_id).bind(name).bind(name).bind(&new_uuid).bind(usn).bind(&now).bind(&now)
-    .execute(pool).await?;
+         VALUES (?, ?, ?, ?, 0, 0, 0, 0, ?, ?, ?)",
+    )
+    .bind(&new_id)
+    .bind(name)
+    .bind(name)
+    .bind(&new_uuid)
+    .bind(usn)
+    .bind(&now)
+    .bind(&now)
+    .execute(pool)
+    .await?;
     Ok(new_id)
 }
 
 /// Resolves a djmdGenre row by name, creating it in native format when missing.
 async fn resolve_or_create_genre(pool: &SqlitePool, name: &str) -> Result<String, sqlx::Error> {
-    if let Some((id,)) = sqlx::query_as::<_, (String,)>(
-        "SELECT ID FROM djmdGenre WHERE Name = ?"
-    ).bind(name).fetch_optional(pool).await? {
+    if let Some((id,)) = sqlx::query_as::<_, (String,)>("SELECT ID FROM djmdGenre WHERE Name = ?")
+        .bind(name)
+        .fetch_optional(pool)
+        .await?
+    {
         return Ok(id);
     }
     let new_id = generate_numeric_id(pool, "djmdGenre").await?;
@@ -965,18 +1189,27 @@ async fn resolve_or_create_genre(pool: &SqlitePool, name: &str) -> Result<String
         "INSERT INTO djmdGenre (ID, Name, UUID, \
          rb_data_status, rb_local_data_status, rb_local_deleted, rb_local_synced, rb_local_usn, \
          created_at, updated_at) \
-         VALUES (?, ?, ?, 0, 0, 0, 0, ?, ?, ?)"
-    ).bind(&new_id).bind(name).bind(&new_uuid).bind(usn).bind(&now).bind(&now)
-    .execute(pool).await?;
+         VALUES (?, ?, ?, 0, 0, 0, 0, ?, ?, ?)",
+    )
+    .bind(&new_id)
+    .bind(name)
+    .bind(&new_uuid)
+    .bind(usn)
+    .bind(&now)
+    .bind(&now)
+    .execute(pool)
+    .await?;
     Ok(new_id)
 }
 
 /// Resolves a djmdAlbum row by name, creating it in native format when missing.
 /// rekordbox fills AlbumArtistID / ImagePath / SearchStr with "" and Compilation with 0 for new albums.
 async fn resolve_or_create_album(pool: &SqlitePool, name: &str) -> Result<String, sqlx::Error> {
-    if let Some((id,)) = sqlx::query_as::<_, (String,)>(
-        "SELECT ID FROM djmdAlbum WHERE Name = ?"
-    ).bind(name).fetch_optional(pool).await? {
+    if let Some((id,)) = sqlx::query_as::<_, (String,)>("SELECT ID FROM djmdAlbum WHERE Name = ?")
+        .bind(name)
+        .fetch_optional(pool)
+        .await?
+    {
         return Ok(id);
     }
     let new_id = generate_numeric_id(pool, "djmdAlbum").await?;
@@ -987,9 +1220,16 @@ async fn resolve_or_create_album(pool: &SqlitePool, name: &str) -> Result<String
         "INSERT INTO djmdAlbum (ID, Name, AlbumArtistID, ImagePath, Compilation, SearchStr, UUID, \
          rb_data_status, rb_local_data_status, rb_local_deleted, rb_local_synced, rb_local_usn, \
          created_at, updated_at) \
-         VALUES (?, ?, '', '', 0, '', ?, 0, 0, 0, 0, ?, ?, ?)"
-    ).bind(&new_id).bind(name).bind(&new_uuid).bind(usn).bind(&now).bind(&now)
-    .execute(pool).await?;
+         VALUES (?, ?, '', '', 0, '', ?, 0, 0, 0, 0, ?, ?, ?)",
+    )
+    .bind(&new_id)
+    .bind(name)
+    .bind(&new_uuid)
+    .bind(usn)
+    .bind(&now)
+    .bind(&now)
+    .execute(pool)
+    .await?;
     Ok(new_id)
 }
 
@@ -1000,13 +1240,19 @@ where
     F: FnOnce(String) -> Fut,
     Fut: std::future::Future<Output = Result<String, sqlx::Error>>,
 {
-    if name.is_empty() { Ok(String::new()) } else { resolve(name.to_string()).await }
+    if name.is_empty() {
+        Ok(String::new())
+    } else {
+        resolve(name.to_string()).await
+    }
 }
 
 async fn resolve_key_id(pool: &SqlitePool, key_name: &str) -> Result<Option<String>, sqlx::Error> {
-    sqlx::query_as::<_, (String,)>(
-        "SELECT ID FROM djmdKey WHERE ScaleName = ?"
-    ).bind(key_name).fetch_optional(pool).await.map(|r| r.map(|(id,)| id))
+    sqlx::query_as::<_, (String,)>("SELECT ID FROM djmdKey WHERE ScaleName = ?")
+        .bind(key_name)
+        .fetch_optional(pool)
+        .await
+        .map(|r| r.map(|(id,)| id))
 }
 
 /// Fields accepted by `tracks update`. `None` = leave the column alone.
@@ -1028,9 +1274,18 @@ struct TrackFields {
 
 impl TrackFields {
     fn is_empty(&self) -> bool {
-        self.title.is_none() && self.artist.is_none() && self.genre.is_none() && self.album.is_none()
-            && self.track_no.is_none() && self.disc_no.is_none() && self.year.is_none() && self.path.is_none()
-            && self.bpm.is_none() && self.key.is_none() && self.rating.is_none() && self.comment.is_none()
+        self.title.is_none()
+            && self.artist.is_none()
+            && self.genre.is_none()
+            && self.album.is_none()
+            && self.track_no.is_none()
+            && self.disc_no.is_none()
+            && self.year.is_none()
+            && self.path.is_none()
+            && self.bpm.is_none()
+            && self.key.is_none()
+            && self.rating.is_none()
+            && self.comment.is_none()
     }
 }
 
@@ -1040,18 +1295,39 @@ fn file_name_of(path: &str) -> &str {
 }
 
 async fn handle_tracks_update(
-    pool: &SqlitePool, track_id: &str, fields: TrackFields, execute: bool,
+    pool: &SqlitePool,
+    track_id: &str,
+    fields: TrackFields,
+    execute: bool,
 ) -> (serde_json::Value, i32) {
-    let TrackFields { title, artist, genre, album, track_no, disc_no, year, path, bpm, key, rating, comment } = &fields;
+    let TrackFields {
+        title,
+        artist,
+        genre,
+        album,
+        track_no,
+        disc_no,
+        year,
+        path,
+        bpm,
+        key,
+        rating,
+        comment,
+    } = &fields;
     // Verify track exists
     let (cur_title, cur_artist) = match resolve_track_summary(pool, track_id).await {
         Ok(Some(t)) => t,
-        Ok(None) => return (
-            output::error("not_found", output::EXIT_NOT_FOUND,
-                &format!("Track not found: {}", track_id),
-                Some("Use 'rbx tracks list' to see available tracks")),
-            output::EXIT_NOT_FOUND,
-        ),
+        Ok(None) => {
+            return (
+                output::error(
+                    "not_found",
+                    output::EXIT_NOT_FOUND,
+                    &format!("Track not found: {}", track_id),
+                    Some("Use 'rbx tracks list' to see available tracks"),
+                ),
+                output::EXIT_NOT_FOUND,
+            )
+        }
         Err(e) => return db_error(e),
     };
 
@@ -1068,12 +1344,17 @@ async fn handle_tracks_update(
     if let Some(ref k) = key {
         match resolve_key_id(pool, k).await {
             Ok(Some(_)) => {}
-            Ok(None) => return (
-                output::error("not_found", output::EXIT_NOT_FOUND,
-                    &format!("Unknown key: {}", k),
-                    Some("Use 'rbx query \"SELECT ScaleName FROM djmdKey\"' to see valid keys")),
-                output::EXIT_NOT_FOUND,
-            ),
+            Ok(None) => {
+                return (
+                    output::error(
+                        "not_found",
+                        output::EXIT_NOT_FOUND,
+                        &format!("Unknown key: {}", k),
+                        Some("Use 'rbx query \"SELECT ScaleName FROM djmdKey\"' to see valid keys"),
+                    ),
+                    output::EXIT_NOT_FOUND,
+                )
+            }
             Err(e) => return db_error(e),
         }
     }
@@ -1081,26 +1362,54 @@ async fn handle_tracks_update(
     if let Some(r) = *rating {
         if !(0..=5).contains(&r) {
             return (
-                output::error("validation", output::EXIT_CONFLICT,
-                    &format!("Rating must be 0-5, got: {}", r), None),
+                output::error(
+                    "validation",
+                    output::EXIT_CONFLICT,
+                    &format!("Rating must be 0-5, got: {}", r),
+                    None,
+                ),
                 output::EXIT_CONFLICT,
             );
         }
     }
 
     let mut changes = serde_json::Map::new();
-    if let Some(v) = title { changes.insert("title".into(), serde_json::json!(v)); }
-    if let Some(v) = artist { changes.insert("artist".into(), serde_json::json!(v)); }
-    if let Some(v) = genre { changes.insert("genre".into(), serde_json::json!(v)); }
-    if let Some(v) = album { changes.insert("album".into(), serde_json::json!(v)); }
-    if let Some(v) = track_no { changes.insert("track_no".into(), serde_json::json!(v)); }
-    if let Some(v) = disc_no { changes.insert("disc_no".into(), serde_json::json!(v)); }
-    if let Some(v) = year { changes.insert("year".into(), serde_json::json!(v)); }
-    if let Some(v) = path { changes.insert("path".into(), serde_json::json!(v)); }
-    if let Some(v) = bpm { changes.insert("bpm".into(), serde_json::json!(v)); }
-    if let Some(v) = key { changes.insert("key".into(), serde_json::json!(v)); }
-    if let Some(v) = rating { changes.insert("rating".into(), serde_json::json!(v)); }
-    if let Some(v) = comment { changes.insert("comment".into(), serde_json::json!(v)); }
+    if let Some(v) = title {
+        changes.insert("title".into(), serde_json::json!(v));
+    }
+    if let Some(v) = artist {
+        changes.insert("artist".into(), serde_json::json!(v));
+    }
+    if let Some(v) = genre {
+        changes.insert("genre".into(), serde_json::json!(v));
+    }
+    if let Some(v) = album {
+        changes.insert("album".into(), serde_json::json!(v));
+    }
+    if let Some(v) = track_no {
+        changes.insert("track_no".into(), serde_json::json!(v));
+    }
+    if let Some(v) = disc_no {
+        changes.insert("disc_no".into(), serde_json::json!(v));
+    }
+    if let Some(v) = year {
+        changes.insert("year".into(), serde_json::json!(v));
+    }
+    if let Some(v) = path {
+        changes.insert("path".into(), serde_json::json!(v));
+    }
+    if let Some(v) = bpm {
+        changes.insert("bpm".into(), serde_json::json!(v));
+    }
+    if let Some(v) = key {
+        changes.insert("key".into(), serde_json::json!(v));
+    }
+    if let Some(v) = rating {
+        changes.insert("rating".into(), serde_json::json!(v));
+    }
+    if let Some(v) = comment {
+        changes.insert("comment".into(), serde_json::json!(v));
+    }
 
     let plan = serde_json::json!({
         "action": "update_track",
@@ -1117,32 +1426,55 @@ async fn handle_tracks_update(
 
     // Resolve FK values before building the query
     let artist_id = if let Some(v) = artist {
-        match resolve_fk(v, |n| async move { resolve_or_create_artist(pool, &n).await }).await {
+        match resolve_fk(
+            v,
+            |n| async move { resolve_or_create_artist(pool, &n).await },
+        )
+        .await
+        {
             Ok(id) => Some(id),
             Err(e) => return db_error(e),
         }
-    } else { None };
+    } else {
+        None
+    };
 
     let genre_id = if let Some(v) = genre {
-        match resolve_fk(v, |n| async move { resolve_or_create_genre(pool, &n).await }).await {
+        match resolve_fk(
+            v,
+            |n| async move { resolve_or_create_genre(pool, &n).await },
+        )
+        .await
+        {
             Ok(id) => Some(id),
             Err(e) => return db_error(e),
         }
-    } else { None };
+    } else {
+        None
+    };
 
     let album_id = if let Some(v) = album {
-        match resolve_fk(v, |n| async move { resolve_or_create_album(pool, &n).await }).await {
+        match resolve_fk(
+            v,
+            |n| async move { resolve_or_create_album(pool, &n).await },
+        )
+        .await
+        {
             Ok(id) => Some(id),
             Err(e) => return db_error(e),
         }
-    } else { None };
+    } else {
+        None
+    };
 
     let key_id = if let Some(v) = key {
         match resolve_key_id(pool, v).await {
             Ok(Some(id)) => Some(id),
             _ => unreachable!(),
         }
-    } else { None };
+    } else {
+        None
+    };
 
     // Execute individual UPDATEs per field
     let now = now_datetime();
@@ -1150,52 +1482,98 @@ async fn handle_tracks_update(
 
     macro_rules! update_field {
         ($col:expr, $val:expr) => {
-            let sql = format!("UPDATE djmdContent SET {} = ?, updated_at = ? WHERE ID = ?", $col);
-            if let Err(e) = sqlx::query(&sql).bind($val).bind(&now).bind(track_id).execute(pool).await {
+            let sql = format!(
+                "UPDATE djmdContent SET {} = ?, updated_at = ? WHERE ID = ?",
+                $col
+            );
+            if let Err(e) = sqlx::query(&sql)
+                .bind($val)
+                .bind(&now)
+                .bind(track_id)
+                .execute(pool)
+                .await
+            {
                 errors.push(e.to_string());
             }
         };
     }
 
-    if let Some(v) = title { update_field!("Title", v); }
-    if let Some(ref v) = artist_id { update_field!("ArtistID", v); }
-    if let Some(ref v) = genre_id { update_field!("GenreID", v); }
-    if let Some(ref v) = album_id { update_field!("AlbumID", v); }
-    if let Some(v) = track_no { update_field!("TrackNo", v); }
-    if let Some(v) = disc_no { update_field!("DiscNo", v); }
-    if let Some(v) = year { update_field!("ReleaseYear", v); }
+    if let Some(v) = title {
+        update_field!("Title", v);
+    }
+    if let Some(ref v) = artist_id {
+        update_field!("ArtistID", v);
+    }
+    if let Some(ref v) = genre_id {
+        update_field!("GenreID", v);
+    }
+    if let Some(ref v) = album_id {
+        update_field!("AlbumID", v);
+    }
+    if let Some(v) = track_no {
+        update_field!("TrackNo", v);
+    }
+    if let Some(v) = disc_no {
+        update_field!("DiscNo", v);
+    }
+    if let Some(v) = year {
+        update_field!("ReleaseYear", v);
+    }
     if let Some(v) = path {
         update_field!("FolderPath", v);
         update_field!("FileNameL", file_name_of(v));
     }
-    if let Some(v) = bpm { let bpm_int = (v * 100.0) as i32; update_field!("BPM", &bpm_int); }
-    if let Some(ref v) = key_id { update_field!("KeyID", v); }
-    if let Some(v) = rating { update_field!("Rating", v); }
-    if let Some(v) = comment { update_field!("Commnt", v); }
+    if let Some(v) = bpm {
+        let bpm_int = (v * 100.0) as i32;
+        update_field!("BPM", &bpm_int);
+    }
+    if let Some(ref v) = key_id {
+        update_field!("KeyID", v);
+    }
+    if let Some(v) = rating {
+        update_field!("Rating", v);
+    }
+    if let Some(v) = comment {
+        update_field!("Commnt", v);
+    }
 
     if !errors.is_empty() {
         return db_error(sqlx::Error::Protocol(errors.join("; ")));
     }
 
     (
-        output::mutation_done("tracks.update", serde_json::json!({
-            "track": { "id": track_id, "title": cur_title, "artist": cur_artist },
-            "changes": serde_json::Value::Object(changes),
-        })),
+        output::mutation_done(
+            "tracks.update",
+            serde_json::json!({
+                "track": { "id": track_id, "title": cur_title, "artist": cur_artist },
+                "changes": serde_json::Value::Object(changes),
+            }),
+        ),
         output::EXIT_OK,
     )
 }
 
 // --- Handlers: tracks mytags ---
 
-async fn handle_track_mytags(pool: &SqlitePool, action: TrackMytagsAction) -> (serde_json::Value, i32) {
+async fn handle_track_mytags(
+    pool: &SqlitePool,
+    action: TrackMytagsAction,
+) -> (serde_json::Value, i32) {
     match action {
         TrackMytagsAction::List { track_id } => {
-            if resolve_track_summary(pool, &track_id).await.ok().flatten().is_none() {
+            if resolve_track_summary(pool, &track_id)
+                .await
+                .ok()
+                .flatten()
+                .is_none()
+            {
                 return (
-                    output::error("not_found", output::EXIT_NOT_FOUND,
+                    output::error(
+                        "not_found",
+                        output::EXIT_NOT_FOUND,
                         &format!("Track not found: {}", track_id),
-                        Some("Use 'rbx tracks list' to see available tracks")),
+                        Some("Use 'rbx tracks list' to see available tracks"),
+                    ),
                     output::EXIT_NOT_FOUND,
                 );
             }
@@ -1204,35 +1582,54 @@ async fn handle_track_mytags(pool: &SqlitePool, action: TrackMytagsAction) -> (s
                  FROM djmdSongMyTag smt \
                  JOIN djmdMyTag t ON smt.MyTagID = t.ID \
                  LEFT JOIN djmdMyTag p ON t.ParentID = p.ID \
-                 WHERE smt.ContentID = ? AND smt.rb_local_deleted = 0 AND t.rb_local_deleted = 0"
-            ).bind(&track_id).fetch_all(pool).await {
+                 WHERE smt.ContentID = ? AND smt.rb_local_deleted = 0 AND t.rb_local_deleted = 0",
+            )
+            .bind(&track_id)
+            .fetch_all(pool)
+            .await
+            {
                 Ok(rows) => {
                     let items: Vec<_> = rows.iter().map(|r| r.to_json()).collect();
-                    (output::success("track_mytags", serde_json::Value::Array(items)), output::EXIT_OK)
+                    (
+                        output::success("track_mytags", serde_json::Value::Array(items)),
+                        output::EXIT_OK,
+                    )
                 }
                 Err(e) => db_error(e),
             }
         }
-        TrackMytagsAction::Add { track_id, tag_ids, execute } => {
-            handle_track_mytag_add(pool, &track_id, &tag_ids, execute).await
-        }
-        TrackMytagsAction::Remove { track_id, tag_ids, execute } => {
-            handle_track_mytag_remove(pool, &track_id, &tag_ids, execute).await
-        }
+        TrackMytagsAction::Add {
+            track_id,
+            tag_ids,
+            execute,
+        } => handle_track_mytag_add(pool, &track_id, &tag_ids, execute).await,
+        TrackMytagsAction::Remove {
+            track_id,
+            tag_ids,
+            execute,
+        } => handle_track_mytag_remove(pool, &track_id, &tag_ids, execute).await,
     }
 }
 
 async fn handle_track_mytag_add(
-    pool: &SqlitePool, track_id: &str, tag_ids: &[String], execute: bool,
+    pool: &SqlitePool,
+    track_id: &str,
+    tag_ids: &[String],
+    execute: bool,
 ) -> (serde_json::Value, i32) {
     let (title, artist) = match resolve_track_summary(pool, track_id).await {
         Ok(Some(t)) => t,
-        Ok(None) => return (
-            output::error("not_found", output::EXIT_NOT_FOUND,
-                &format!("Track not found: {}", track_id),
-                Some("Use 'rbx tracks list' to see available tracks")),
-            output::EXIT_NOT_FOUND,
-        ),
+        Ok(None) => {
+            return (
+                output::error(
+                    "not_found",
+                    output::EXIT_NOT_FOUND,
+                    &format!("Track not found: {}", track_id),
+                    Some("Use 'rbx tracks list' to see available tracks"),
+                ),
+                output::EXIT_NOT_FOUND,
+            )
+        }
         Err(e) => return db_error(e),
     };
 
@@ -1241,12 +1638,17 @@ async fn handle_track_mytag_add(
     for tid in tag_ids {
         let tag_name = match resolve_tag_name(pool, tid).await {
             Ok(Some(n)) => n,
-            Ok(None) => return (
-                output::error("not_found", output::EXIT_NOT_FOUND,
-                    &format!("My Tag not found: {}", tid),
-                    Some("Use 'rbx mytags list' to see available tags")),
-                output::EXIT_NOT_FOUND,
-            ),
+            Ok(None) => {
+                return (
+                    output::error(
+                        "not_found",
+                        output::EXIT_NOT_FOUND,
+                        &format!("My Tag not found: {}", tid),
+                        Some("Use 'rbx mytags list' to see available tags"),
+                    ),
+                    output::EXIT_NOT_FOUND,
+                )
+            }
             Err(e) => return db_error(e),
         };
         let exists = sqlx::query_as::<_, (i32,)>(
@@ -1268,9 +1670,12 @@ async fn handle_track_mytag_add(
 
     if tags.is_empty() {
         return (
-            output::error("conflict", output::EXIT_CONFLICT,
+            output::error(
+                "conflict",
+                output::EXIT_CONFLICT,
                 "All specified tags are already assigned",
-                None),
+                None,
+            ),
             output::EXIT_CONFLICT,
         );
     }
@@ -1311,26 +1716,37 @@ async fn handle_track_mytag_add(
     sqlx::query("COMMIT").execute(pool).await.ok();
 
     (
-        output::mutation_done("tracks.mytags.add", serde_json::json!({
-            "track": { "id": track_id, "title": title, "artist": artist },
-            "added": added,
-            "skipped": skipped,
-        })),
+        output::mutation_done(
+            "tracks.mytags.add",
+            serde_json::json!({
+                "track": { "id": track_id, "title": title, "artist": artist },
+                "added": added,
+                "skipped": skipped,
+            }),
+        ),
         output::EXIT_OK,
     )
 }
 
 async fn handle_track_mytag_remove(
-    pool: &SqlitePool, track_id: &str, tag_ids: &[String], execute: bool,
+    pool: &SqlitePool,
+    track_id: &str,
+    tag_ids: &[String],
+    execute: bool,
 ) -> (serde_json::Value, i32) {
     let (title, _) = match resolve_track_summary(pool, track_id).await {
         Ok(Some(t)) => t,
-        Ok(None) => return (
-            output::error("not_found", output::EXIT_NOT_FOUND,
-                &format!("Track not found: {}", track_id),
-                Some("Use 'rbx tracks list' to see available tracks")),
-            output::EXIT_NOT_FOUND,
-        ),
+        Ok(None) => {
+            return (
+                output::error(
+                    "not_found",
+                    output::EXIT_NOT_FOUND,
+                    &format!("Track not found: {}", track_id),
+                    Some("Use 'rbx tracks list' to see available tracks"),
+                ),
+                output::EXIT_NOT_FOUND,
+            )
+        }
         Err(e) => return db_error(e),
     };
 
@@ -1338,12 +1754,17 @@ async fn handle_track_mytag_remove(
     for tid in tag_ids {
         let tag_name = match resolve_tag_name(pool, tid).await {
             Ok(Some(n)) => n,
-            Ok(None) => return (
-                output::error("not_found", output::EXIT_NOT_FOUND,
-                    &format!("My Tag not found: {}", tid),
-                    Some("Use 'rbx mytags list' to see available tags")),
-                output::EXIT_NOT_FOUND,
-            ),
+            Ok(None) => {
+                return (
+                    output::error(
+                        "not_found",
+                        output::EXIT_NOT_FOUND,
+                        &format!("My Tag not found: {}", tid),
+                        Some("Use 'rbx mytags list' to see available tags"),
+                    ),
+                    output::EXIT_NOT_FOUND,
+                )
+            }
             Err(e) => return db_error(e),
         };
         let row_id = match sqlx::query_as::<_, (String,)>(
@@ -1378,16 +1799,23 @@ async fn handle_track_mytag_remove(
     sqlx::query("BEGIN").execute(pool).await.ok();
     for (_, _, row_id) in &targets {
         let _ = sqlx::query(
-            "UPDATE djmdSongMyTag SET rb_local_deleted = 1, updated_at = ? WHERE ID = ?"
-        ).bind(&now).bind(row_id).execute(pool).await;
+            "UPDATE djmdSongMyTag SET rb_local_deleted = 1, updated_at = ? WHERE ID = ?",
+        )
+        .bind(&now)
+        .bind(row_id)
+        .execute(pool)
+        .await;
     }
     sqlx::query("COMMIT").execute(pool).await.ok();
 
     (
-        output::mutation_done("tracks.mytags.remove", serde_json::json!({
-            "track": { "id": track_id, "title": title },
-            "removed_count": targets.len(),
-        })),
+        output::mutation_done(
+            "tracks.mytags.remove",
+            serde_json::json!({
+                "track": { "id": track_id, "title": title },
+                "removed_count": targets.len(),
+            }),
+        ),
         output::EXIT_OK,
     )
 }
@@ -1395,12 +1823,18 @@ async fn handle_track_mytag_remove(
 // --- Handlers: playlists ---
 
 async fn resolve_playlist_name(pool: &SqlitePool, id: &str) -> Result<Option<String>, sqlx::Error> {
-    sqlx::query_as::<_, (String,)>(
-        "SELECT Name FROM djmdPlaylist WHERE ID = ?"
-    ).bind(id).fetch_optional(pool).await.map(|r| r.map(|(n,)| n))
+    sqlx::query_as::<_, (String,)>("SELECT Name FROM djmdPlaylist WHERE ID = ?")
+        .bind(id)
+        .fetch_optional(pool)
+        .await
+        .map(|r| r.map(|(n,)| n))
 }
 
-async fn handle_playlists(pool: &SqlitePool, db_path: &Path, action: PlaylistsAction) -> (serde_json::Value, i32) {
+async fn handle_playlists(
+    pool: &SqlitePool,
+    db_path: &Path,
+    action: PlaylistsAction,
+) -> (serde_json::Value, i32) {
     match action {
         PlaylistsAction::List => {
             match sqlx::query_as::<_, PlaylistRow>(
@@ -1426,7 +1860,10 @@ async fn handle_playlists(pool: &SqlitePool, db_path: &Path, action: PlaylistsAc
 
 // --- Handlers: playlists tracks ---
 
-async fn handle_playlist_tracks(pool: &SqlitePool, action: PlaylistTracksAction) -> (serde_json::Value, i32) {
+async fn handle_playlist_tracks(
+    pool: &SqlitePool,
+    action: PlaylistTracksAction,
+) -> (serde_json::Value, i32) {
     match action {
         PlaylistTracksAction::List { playlist_id } => {
             match sqlx::query_as::<_, PlaylistTrackRow>(
@@ -1438,41 +1875,63 @@ async fn handle_playlist_tracks(pool: &SqlitePool, action: PlaylistTracksAction)
                  LEFT JOIN djmdArtist a ON c.ArtistID = a.ID \
                  LEFT JOIN djmdKey k ON c.KeyID = k.ID \
                  WHERE sp.PlaylistID = ? \
-                 ORDER BY sp.TrackNo"
-            ).bind(&playlist_id).fetch_all(pool).await {
+                 ORDER BY sp.TrackNo",
+            )
+            .bind(&playlist_id)
+            .fetch_all(pool)
+            .await
+            {
                 Ok(rows) if rows.is_empty() => (
-                    output::error("not_found", output::EXIT_NOT_FOUND,
+                    output::error(
+                        "not_found",
+                        output::EXIT_NOT_FOUND,
                         &format!("Playlist not found or empty: {}", playlist_id),
-                        Some("Use 'rbx playlists list' to see available playlists")),
+                        Some("Use 'rbx playlists list' to see available playlists"),
+                    ),
                     output::EXIT_NOT_FOUND,
                 ),
                 Ok(rows) => {
                     let items: Vec<_> = rows.iter().map(|r| r.to_json()).collect();
-                    (output::success("playlist_tracks", serde_json::Value::Array(items)), output::EXIT_OK)
+                    (
+                        output::success("playlist_tracks", serde_json::Value::Array(items)),
+                        output::EXIT_OK,
+                    )
                 }
                 Err(e) => db_error(e),
             }
         }
-        PlaylistTracksAction::Add { playlist_id, track_ids, execute } => {
-            handle_playlist_track_add(pool, &playlist_id, &track_ids, execute).await
-        }
-        PlaylistTracksAction::Remove { playlist_id, track_ids, execute } => {
-            handle_playlist_track_remove(pool, &playlist_id, &track_ids, execute).await
-        }
+        PlaylistTracksAction::Add {
+            playlist_id,
+            track_ids,
+            execute,
+        } => handle_playlist_track_add(pool, &playlist_id, &track_ids, execute).await,
+        PlaylistTracksAction::Remove {
+            playlist_id,
+            track_ids,
+            execute,
+        } => handle_playlist_track_remove(pool, &playlist_id, &track_ids, execute).await,
     }
 }
 
 async fn handle_playlist_track_add(
-    pool: &SqlitePool, playlist_id: &str, track_ids: &[String], execute: bool,
+    pool: &SqlitePool,
+    playlist_id: &str,
+    track_ids: &[String],
+    execute: bool,
 ) -> (serde_json::Value, i32) {
     let pl_name = match resolve_playlist_name(pool, playlist_id).await {
         Ok(Some(n)) => n,
-        Ok(None) => return (
-            output::error("not_found", output::EXIT_NOT_FOUND,
-                &format!("Playlist not found: {}", playlist_id),
-                Some("Use 'rbx playlists list' to see available playlists")),
-            output::EXIT_NOT_FOUND,
-        ),
+        Ok(None) => {
+            return (
+                output::error(
+                    "not_found",
+                    output::EXIT_NOT_FOUND,
+                    &format!("Playlist not found: {}", playlist_id),
+                    Some("Use 'rbx playlists list' to see available playlists"),
+                ),
+                output::EXIT_NOT_FOUND,
+            )
+        }
         Err(e) => return db_error(e),
     };
 
@@ -1482,19 +1941,28 @@ async fn handle_playlist_track_add(
             Ok(Some((title, artist))) => entries.push(serde_json::json!({
                 "id": tid, "title": title, "artist": artist,
             })),
-            Ok(None) => return (
-                output::error("not_found", output::EXIT_NOT_FOUND,
-                    &format!("Track not found: {}", tid),
-                    Some("Use 'rbx tracks list' to see available tracks")),
-                output::EXIT_NOT_FOUND,
-            ),
+            Ok(None) => {
+                return (
+                    output::error(
+                        "not_found",
+                        output::EXIT_NOT_FOUND,
+                        &format!("Track not found: {}", tid),
+                        Some("Use 'rbx tracks list' to see available tracks"),
+                    ),
+                    output::EXIT_NOT_FOUND,
+                )
+            }
             Err(e) => return db_error(e),
         }
     }
 
     let max_track_no = match sqlx::query_as::<_, (Option<i32>,)>(
-        "SELECT MAX(TrackNo) FROM djmdSongPlaylist WHERE PlaylistID = ?"
-    ).bind(playlist_id).fetch_one(pool).await {
+        "SELECT MAX(TrackNo) FROM djmdSongPlaylist WHERE PlaylistID = ?",
+    )
+    .bind(playlist_id)
+    .fetch_one(pool)
+    .await
+    {
         Ok((n,)) => n.unwrap_or(0),
         Err(e) => return db_error(e),
     };
@@ -1508,8 +1976,7 @@ async fn handle_playlist_track_add(
 
     if !execute {
         return (
-            output::mutation_dry_run("playlists.tracks.add", plan,
-                "Add --execute to apply"),
+            output::mutation_dry_run("playlists.tracks.add", plan, "Add --execute to apply"),
             output::EXIT_OK,
         );
     }
@@ -1547,25 +2014,36 @@ async fn handle_playlist_track_add(
     sqlx::query("COMMIT").execute(pool).await.ok();
 
     (
-        output::mutation_done("playlists.tracks.add", serde_json::json!({
-            "playlist": { "id": playlist_id, "name": pl_name },
-            "added": results,
-        })),
+        output::mutation_done(
+            "playlists.tracks.add",
+            serde_json::json!({
+                "playlist": { "id": playlist_id, "name": pl_name },
+                "added": results,
+            }),
+        ),
         output::EXIT_OK,
     )
 }
 
 async fn handle_playlist_track_remove(
-    pool: &SqlitePool, playlist_id: &str, track_ids: &[String], execute: bool,
+    pool: &SqlitePool,
+    playlist_id: &str,
+    track_ids: &[String],
+    execute: bool,
 ) -> (serde_json::Value, i32) {
     let pl_name = match resolve_playlist_name(pool, playlist_id).await {
         Ok(Some(n)) => n,
-        Ok(None) => return (
-            output::error("not_found", output::EXIT_NOT_FOUND,
-                &format!("Playlist not found: {}", playlist_id),
-                Some("Use 'rbx playlists list' to see available playlists")),
-            output::EXIT_NOT_FOUND,
-        ),
+        Ok(None) => {
+            return (
+                output::error(
+                    "not_found",
+                    output::EXIT_NOT_FOUND,
+                    &format!("Playlist not found: {}", playlist_id),
+                    Some("Use 'rbx playlists list' to see available playlists"),
+                ),
+                output::EXIT_NOT_FOUND,
+            )
+        }
         Err(e) => return db_error(e),
     };
 
@@ -1573,24 +2051,39 @@ async fn handle_playlist_track_remove(
     for tid in track_ids {
         let (title, _) = match resolve_track_summary(pool, tid).await {
             Ok(Some(t)) => t,
-            Ok(None) => return (
-                output::error("not_found", output::EXIT_NOT_FOUND,
-                    &format!("Track not found: {}", tid),
-                    Some("Use 'rbx tracks list' to see available tracks")),
-                output::EXIT_NOT_FOUND,
-            ),
+            Ok(None) => {
+                return (
+                    output::error(
+                        "not_found",
+                        output::EXIT_NOT_FOUND,
+                        &format!("Track not found: {}", tid),
+                        Some("Use 'rbx tracks list' to see available tracks"),
+                    ),
+                    output::EXIT_NOT_FOUND,
+                )
+            }
             Err(e) => return db_error(e),
         };
         let existing = match sqlx::query_as::<_, (String, i32)>(
-            "SELECT ID, TrackNo FROM djmdSongPlaylist WHERE PlaylistID = ? AND ContentID = ?"
-        ).bind(playlist_id).bind(tid).fetch_optional(pool).await {
+            "SELECT ID, TrackNo FROM djmdSongPlaylist WHERE PlaylistID = ? AND ContentID = ?",
+        )
+        .bind(playlist_id)
+        .bind(tid)
+        .fetch_optional(pool)
+        .await
+        {
             Ok(Some(r)) => r,
-            Ok(None) => return (
-                output::error("not_found", output::EXIT_NOT_FOUND,
-                    &format!("Track '{}' is not in playlist '{}'", title, pl_name),
-                    Some("Use 'rbx playlists tracks list <playlist_id>' to see tracks")),
-                output::EXIT_NOT_FOUND,
-            ),
+            Ok(None) => {
+                return (
+                    output::error(
+                        "not_found",
+                        output::EXIT_NOT_FOUND,
+                        &format!("Track '{}' is not in playlist '{}'", title, pl_name),
+                        Some("Use 'rbx playlists tracks list <playlist_id>' to see tracks"),
+                    ),
+                    output::EXIT_NOT_FOUND,
+                )
+            }
             Err(e) => return db_error(e),
         };
         targets.push((tid.clone(), existing.0, existing.1));
@@ -1605,8 +2098,7 @@ async fn handle_playlist_track_remove(
 
     if !execute {
         return (
-            output::mutation_dry_run("playlists.tracks.remove", plan,
-                "Add --execute to apply"),
+            output::mutation_dry_run("playlists.tracks.remove", plan, "Add --execute to apply"),
             output::EXIT_OK,
         );
     }
@@ -1614,24 +2106,36 @@ async fn handle_playlist_track_remove(
     sqlx::query("BEGIN").execute(pool).await.ok();
     for (_, row_id, _) in &targets {
         let _ = sqlx::query("DELETE FROM djmdSongPlaylist WHERE ID = ?")
-            .bind(row_id).execute(pool).await;
+            .bind(row_id)
+            .execute(pool)
+            .await;
     }
 
     // Renumber all remaining tracks sequentially
     let remaining = sqlx::query_as::<_, (String,)>(
-        "SELECT ID FROM djmdSongPlaylist WHERE PlaylistID = ? ORDER BY TrackNo"
-    ).bind(playlist_id).fetch_all(pool).await.unwrap_or_default();
+        "SELECT ID FROM djmdSongPlaylist WHERE PlaylistID = ? ORDER BY TrackNo",
+    )
+    .bind(playlist_id)
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default();
     for (i, (row_id,)) in remaining.iter().enumerate() {
         let _ = sqlx::query("UPDATE djmdSongPlaylist SET TrackNo = ? WHERE ID = ?")
-            .bind((i + 1) as i32).bind(row_id).execute(pool).await;
+            .bind((i + 1) as i32)
+            .bind(row_id)
+            .execute(pool)
+            .await;
     }
     sqlx::query("COMMIT").execute(pool).await.ok();
 
     (
-        output::mutation_done("playlists.tracks.remove", serde_json::json!({
-            "playlist": { "id": playlist_id, "name": pl_name },
-            "removed_count": targets.len(),
-        })),
+        output::mutation_done(
+            "playlists.tracks.remove",
+            serde_json::json!({
+                "playlist": { "id": playlist_id, "name": pl_name },
+                "removed_count": targets.len(),
+            }),
+        ),
         output::EXIT_OK,
     )
 }
@@ -1639,11 +2143,19 @@ async fn handle_playlist_track_remove(
 // --- Handlers: playlists search ---
 
 async fn handle_playlists_search(pool: &SqlitePool, track_id: &str) -> (serde_json::Value, i32) {
-    if resolve_track_summary(pool, track_id).await.ok().flatten().is_none() {
+    if resolve_track_summary(pool, track_id)
+        .await
+        .ok()
+        .flatten()
+        .is_none()
+    {
         return (
-            output::error("not_found", output::EXIT_NOT_FOUND,
+            output::error(
+                "not_found",
+                output::EXIT_NOT_FOUND,
                 &format!("Track not found: {}", track_id),
-                Some("Use 'rbx tracks list' to see available tracks")),
+                Some("Use 'rbx tracks list' to see available tracks"),
+            ),
             output::EXIT_NOT_FOUND,
         );
     }
@@ -1653,17 +2165,27 @@ async fn handle_playlists_search(pool: &SqlitePool, track_id: &str) -> (serde_js
          FROM djmdSongPlaylist sp \
          JOIN djmdPlaylist p ON sp.PlaylistID = p.ID \
          WHERE sp.ContentID = ? \
-         ORDER BY p.Name"
-    ).bind(track_id).fetch_all(pool).await {
+         ORDER BY p.Name",
+    )
+    .bind(track_id)
+    .fetch_all(pool)
+    .await
+    {
         Ok(rows) => {
-            let items: Vec<_> = rows.iter().map(|(id, name, track_no)| {
-                serde_json::json!({
-                    "playlist_id": id,
-                    "playlist_name": name,
-                    "track_no": track_no,
+            let items: Vec<_> = rows
+                .iter()
+                .map(|(id, name, track_no)| {
+                    serde_json::json!({
+                        "playlist_id": id,
+                        "playlist_name": name,
+                        "track_no": track_no,
+                    })
                 })
-            }).collect();
-            (output::success("track_playlists", serde_json::Value::Array(items)), output::EXIT_OK)
+                .collect();
+            (
+                output::success("track_playlists", serde_json::Value::Array(items)),
+                output::EXIT_OK,
+            )
         }
         Err(e) => db_error(e),
     }
@@ -1672,17 +2194,26 @@ async fn handle_playlists_search(pool: &SqlitePool, track_id: &str) -> (serde_js
 // --- Handlers: playlists create/delete ---
 
 async fn handle_playlists_create(
-    pool: &SqlitePool, db_path: &Path, name: &str, parent_id: Option<&str>, execute: bool,
+    pool: &SqlitePool,
+    db_path: &Path,
+    name: &str,
+    parent_id: Option<&str>,
+    execute: bool,
 ) -> (serde_json::Value, i32) {
     if let Some(pid) = parent_id {
         match resolve_playlist_name(pool, pid).await {
             Ok(Some(_)) => {}
-            Ok(None) => return (
-                output::error("not_found", output::EXIT_NOT_FOUND,
-                    &format!("Parent folder not found: {}", pid),
-                    Some("Use 'rbx playlists list' to see available folders")),
-                output::EXIT_NOT_FOUND,
-            ),
+            Ok(None) => {
+                return (
+                    output::error(
+                        "not_found",
+                        output::EXIT_NOT_FOUND,
+                        &format!("Parent folder not found: {}", pid),
+                        Some("Use 'rbx playlists list' to see available folders"),
+                    ),
+                    output::EXIT_NOT_FOUND,
+                )
+            }
             Err(e) => return db_error(e),
         }
     }
@@ -1697,25 +2228,30 @@ async fn handle_playlists_create(
 
     if !execute {
         return (
-            output::mutation_dry_run("playlists.create", plan,
-                "Add --execute to apply"),
+            output::mutation_dry_run("playlists.create", plan, "Add --execute to apply"),
             output::EXIT_OK,
         );
     }
 
     let new_id = match generate_numeric_id(pool, "djmdPlaylist").await {
-        Ok(v) => v, Err(e) => return db_error(e),
+        Ok(v) => v,
+        Err(e) => return db_error(e),
     };
     let new_uuid = Uuid::new_v4().to_string();
     let now = now_datetime();
     let now_ms = chrono::Utc::now().timestamp_millis();
     let usn = match allocate_usns(pool, 1).await {
-        Ok(v) => v, Err(e) => return db_error(e),
+        Ok(v) => v,
+        Err(e) => return db_error(e),
     };
     // Seq: max within same parent + 1
     let seq = match sqlx::query_as::<_, (Option<i32>,)>(
-        "SELECT MAX(Seq) FROM djmdPlaylist WHERE ParentID = ? AND rb_local_deleted = 0"
-    ).bind(parent).fetch_one(pool).await {
+        "SELECT MAX(Seq) FROM djmdPlaylist WHERE ParentID = ? AND rb_local_deleted = 0",
+    )
+    .bind(parent)
+    .fetch_one(pool)
+    .await
+    {
         Ok((s,)) => s.unwrap_or(0) + 1,
         Err(e) => return db_error(e),
     };
@@ -1724,23 +2260,35 @@ async fn handle_playlists_create(
         "INSERT INTO djmdPlaylist (ID, Seq, Name, Attribute, ParentID, UUID, \
          rb_data_status, rb_local_data_status, rb_local_deleted, rb_local_synced, rb_local_usn, \
          created_at, updated_at) \
-         VALUES (?, ?, ?, 0, ?, ?, 0, 0, 0, 0, ?, ?, ?)"
-    ).bind(&new_id).bind(seq).bind(name).bind(parent).bind(&new_uuid).bind(usn)
-    .bind(&now).bind(&now)
-    .execute(pool).await {
+         VALUES (?, ?, ?, 0, ?, ?, 0, 0, 0, 0, ?, ?, ?)",
+    )
+    .bind(&new_id)
+    .bind(seq)
+    .bind(name)
+    .bind(parent)
+    .bind(&new_uuid)
+    .bind(usn)
+    .bind(&now)
+    .bind(&now)
+    .execute(pool)
+    .await
+    {
         Ok(_) => {
             let xml_path = playlist_xml::xml_path_for(db_path);
-            let xml_updated = playlist_xml::add_node(&xml_path, &new_id, parent, 0, now_ms)
-                .unwrap_or(false);
+            let xml_updated =
+                playlist_xml::add_node(&xml_path, &new_id, parent, 0, now_ms).unwrap_or(false);
             (
-                output::mutation_done("playlists.create", serde_json::json!({
-                    "id": new_id,
-                    "name": name,
-                    "kind": "playlist",
-                    "parent_id": parent,
-                    "seq": seq,
-                    "playlist_xml_updated": xml_updated,
-                })),
+                output::mutation_done(
+                    "playlists.create",
+                    serde_json::json!({
+                        "id": new_id,
+                        "name": name,
+                        "kind": "playlist",
+                        "parent_id": parent,
+                        "seq": seq,
+                        "playlist_xml_updated": xml_updated,
+                    }),
+                ),
                 output::EXIT_OK,
             )
         }
@@ -1749,26 +2297,42 @@ async fn handle_playlists_create(
 }
 
 async fn handle_playlists_delete(
-    pool: &SqlitePool, db_path: &Path, playlist_id: &str, execute: bool,
+    pool: &SqlitePool,
+    db_path: &Path,
+    playlist_id: &str,
+    execute: bool,
 ) -> (serde_json::Value, i32) {
     let pl = match sqlx::query_as::<_, PlaylistRow>(
         "SELECT ID as id, Name as name, Attribute as attribute, ParentID as parent_id \
-         FROM djmdPlaylist WHERE ID = ?"
-    ).bind(playlist_id).fetch_optional(pool).await {
+         FROM djmdPlaylist WHERE ID = ?",
+    )
+    .bind(playlist_id)
+    .fetch_optional(pool)
+    .await
+    {
         Ok(Some(p)) => p,
-        Ok(None) => return (
-            output::error("not_found", output::EXIT_NOT_FOUND,
-                &format!("Playlist not found: {}", playlist_id),
-                Some("Use 'rbx playlists list' to see available playlists")),
-            output::EXIT_NOT_FOUND,
-        ),
+        Ok(None) => {
+            return (
+                output::error(
+                    "not_found",
+                    output::EXIT_NOT_FOUND,
+                    &format!("Playlist not found: {}", playlist_id),
+                    Some("Use 'rbx playlists list' to see available playlists"),
+                ),
+                output::EXIT_NOT_FOUND,
+            )
+        }
         Err(e) => return db_error(e),
     };
 
     // Count tracks that would be removed
-    let track_count = sqlx::query_as::<_, (i32,)>(
-        "SELECT COUNT(*) FROM djmdSongPlaylist WHERE PlaylistID = ?"
-    ).bind(playlist_id).fetch_one(pool).await.map(|(c,)| c).unwrap_or(0);
+    let track_count =
+        sqlx::query_as::<_, (i32,)>("SELECT COUNT(*) FROM djmdSongPlaylist WHERE PlaylistID = ?")
+            .bind(playlist_id)
+            .fetch_one(pool)
+            .await
+            .map(|(c,)| c)
+            .unwrap_or(0);
 
     let plan = serde_json::json!({
         "action": "delete_playlist",
@@ -1778,28 +2342,34 @@ async fn handle_playlists_delete(
 
     if !execute {
         return (
-            output::mutation_dry_run("playlists.delete", plan,
-                "Add --execute to apply"),
+            output::mutation_dry_run("playlists.delete", plan, "Add --execute to apply"),
             output::EXIT_OK,
         );
     }
 
     // Delete track entries first
     let _ = sqlx::query("DELETE FROM djmdSongPlaylist WHERE PlaylistID = ?")
-        .bind(playlist_id).execute(pool).await;
+        .bind(playlist_id)
+        .execute(pool)
+        .await;
 
     match sqlx::query("DELETE FROM djmdPlaylist WHERE ID = ?")
-        .bind(playlist_id).execute(pool).await {
+        .bind(playlist_id)
+        .execute(pool)
+        .await
+    {
         Ok(_) => {
             let xml_path = playlist_xml::xml_path_for(db_path);
-            let xml_updated = playlist_xml::remove_node(&xml_path, playlist_id)
-                .unwrap_or(false);
+            let xml_updated = playlist_xml::remove_node(&xml_path, playlist_id).unwrap_or(false);
             (
-                output::mutation_done("playlists.delete", serde_json::json!({
-                    "playlist": pl.to_json(),
-                    "tracks_removed": track_count,
-                    "playlist_xml_updated": xml_updated,
-                })),
+                output::mutation_done(
+                    "playlists.delete",
+                    serde_json::json!({
+                        "playlist": pl.to_json(),
+                        "tracks_removed": track_count,
+                        "playlist_xml_updated": xml_updated,
+                    }),
+                ),
                 output::EXIT_OK,
             )
         }
@@ -1815,11 +2385,17 @@ async fn handle_mytags(pool: &SqlitePool, action: MytagsAction) -> (serde_json::
             match sqlx::query_as::<_, MyTagRow>(
                 "SELECT ID as id, Seq as seq, Name as name, Attribute as attribute, \
                  ParentID as parent_id \
-                 FROM djmdMyTag WHERE rb_local_deleted = 0 ORDER BY Seq"
-            ).fetch_all(pool).await {
+                 FROM djmdMyTag WHERE rb_local_deleted = 0 ORDER BY Seq",
+            )
+            .fetch_all(pool)
+            .await
+            {
                 Ok(rows) => {
                     let items: Vec<_> = rows.iter().map(|r| r.to_json()).collect();
-                    (output::success("mytags", serde_json::Value::Array(items)), output::EXIT_OK)
+                    (
+                        output::success("mytags", serde_json::Value::Array(items)),
+                        output::EXIT_OK,
+                    )
                 }
                 Err(e) => db_error(e),
             }
@@ -1832,32 +2408,45 @@ async fn handle_mytags(pool: &SqlitePool, action: MytagsAction) -> (serde_json::
                  JOIN djmdContent c ON smt.ContentID = c.ID \
                  LEFT JOIN djmdArtist a ON c.ArtistID = a.ID \
                  LEFT JOIN djmdKey k ON c.KeyID = k.ID \
-                 WHERE smt.MyTagID = ? AND smt.rb_local_deleted = 0"
-            ).bind(&id).fetch_all(pool).await {
+                 WHERE smt.MyTagID = ? AND smt.rb_local_deleted = 0",
+            )
+            .bind(&id)
+            .fetch_all(pool)
+            .await
+            {
                 Ok(rows) if rows.is_empty() => (
-                    output::error("not_found", output::EXIT_NOT_FOUND,
+                    output::error(
+                        "not_found",
+                        output::EXIT_NOT_FOUND,
                         &format!("My Tag not found or has no tracks: {}", id),
-                        Some("Use 'rbx mytags list' to see available tags")),
+                        Some("Use 'rbx mytags list' to see available tags"),
+                    ),
                     output::EXIT_NOT_FOUND,
                 ),
                 Ok(rows) => {
                     let items: Vec<_> = rows.iter().map(|r| r.to_json()).collect();
-                    (output::success("mytag_tracks", serde_json::Value::Array(items)), output::EXIT_OK)
+                    (
+                        output::success("mytag_tracks", serde_json::Value::Array(items)),
+                        output::EXIT_OK,
+                    )
                 }
                 Err(e) => db_error(e),
             }
         }
-        MytagsAction::Create { name, parent, execute } => {
-            handle_mytags_create(pool, &name, parent.as_deref(), execute).await
-        }
-        MytagsAction::Delete { id, execute } => {
-            handle_mytags_delete(pool, &id, execute).await
-        }
+        MytagsAction::Create {
+            name,
+            parent,
+            execute,
+        } => handle_mytags_create(pool, &name, parent.as_deref(), execute).await,
+        MytagsAction::Delete { id, execute } => handle_mytags_delete(pool, &id, execute).await,
     }
 }
 
 async fn handle_mytags_create(
-    pool: &SqlitePool, name: &str, parent_id: Option<&str>, execute: bool,
+    pool: &SqlitePool,
+    name: &str,
+    parent_id: Option<&str>,
+    execute: bool,
 ) -> (serde_json::Value, i32) {
     // attribute: 0 = tag (has parent), 1 = category (top-level)
     let attribute = if parent_id.is_some() { 0 } else { 1 };
@@ -1865,29 +2454,42 @@ async fn handle_mytags_create(
     if let Some(pid) = parent_id {
         match resolve_tag_name(pool, pid).await {
             Ok(Some(_)) => {}
-            Ok(None) => return (
-                output::error("not_found", output::EXIT_NOT_FOUND,
-                    &format!("Parent category not found: {}", pid),
-                    Some("Use 'rbx mytags list' to see available categories")),
-                output::EXIT_NOT_FOUND,
-            ),
+            Ok(None) => {
+                return (
+                    output::error(
+                        "not_found",
+                        output::EXIT_NOT_FOUND,
+                        &format!("Parent category not found: {}", pid),
+                        Some("Use 'rbx mytags list' to see available categories"),
+                    ),
+                    output::EXIT_NOT_FOUND,
+                )
+            }
             Err(e) => return db_error(e),
         }
     }
 
     // Check for duplicate name under same parent
     let dup = match sqlx::query_as::<_, (String,)>(
-        "SELECT ID FROM djmdMyTag WHERE Name = ? AND ParentID IS ? AND rb_local_deleted = 0"
-    ).bind(name).bind(parent_id).fetch_optional(pool).await {
+        "SELECT ID FROM djmdMyTag WHERE Name = ? AND ParentID IS ? AND rb_local_deleted = 0",
+    )
+    .bind(name)
+    .bind(parent_id)
+    .fetch_optional(pool)
+    .await
+    {
         Ok(r) => r,
         Err(e) => return db_error(e),
     };
 
     if let Some((existing_id,)) = dup {
         return (
-            output::error("conflict", output::EXIT_CONFLICT,
+            output::error(
+                "conflict",
+                output::EXIT_CONFLICT,
                 &format!("My Tag '{}' already exists (ID: {})", name, existing_id),
-                None),
+                None,
+            ),
             output::EXIT_CONFLICT,
         );
     }
@@ -1902,42 +2504,60 @@ async fn handle_mytags_create(
 
     if !execute {
         return (
-            output::mutation_dry_run("mytags.create", plan,
-                "Add --execute to apply"),
+            output::mutation_dry_run("mytags.create", plan, "Add --execute to apply"),
             output::EXIT_OK,
         );
     }
 
     let new_id = match generate_numeric_id(pool, "djmdMyTag").await {
-        Ok(v) => v, Err(e) => return db_error(e),
+        Ok(v) => v,
+        Err(e) => return db_error(e),
     };
     let new_uuid = Uuid::new_v4().to_string();
     let now = now_datetime();
     let usn = match allocate_usns(pool, 1).await {
-        Ok(v) => v, Err(e) => return db_error(e),
+        Ok(v) => v,
+        Err(e) => return db_error(e),
     };
 
     // Seq: max existing + 1
     let max_seq = sqlx::query_as::<_, (Option<i32>,)>(
-        "SELECT MAX(Seq) FROM djmdMyTag WHERE rb_local_deleted = 0"
-    ).fetch_one(pool).await.map(|(s,)| s.unwrap_or(0)).unwrap_or(0);
+        "SELECT MAX(Seq) FROM djmdMyTag WHERE rb_local_deleted = 0",
+    )
+    .fetch_one(pool)
+    .await
+    .map(|(s,)| s.unwrap_or(0))
+    .unwrap_or(0);
 
     match sqlx::query(
         "INSERT INTO djmdMyTag (ID, Seq, Name, Attribute, ParentID, UUID, \
          rb_data_status, rb_local_data_status, rb_local_deleted, rb_local_synced, rb_local_usn, \
          created_at, updated_at) \
-         VALUES (?, ?, ?, ?, ?, ?, 0, 0, 0, 0, ?, ?, ?)"
-    ).bind(&new_id).bind(max_seq + 1).bind(name).bind(attribute).bind(parent_id)
-    .bind(&new_uuid).bind(usn)
-    .bind(&now).bind(&now).execute(pool).await {
+         VALUES (?, ?, ?, ?, ?, ?, 0, 0, 0, 0, ?, ?, ?)",
+    )
+    .bind(&new_id)
+    .bind(max_seq + 1)
+    .bind(name)
+    .bind(attribute)
+    .bind(parent_id)
+    .bind(&new_uuid)
+    .bind(usn)
+    .bind(&now)
+    .bind(&now)
+    .execute(pool)
+    .await
+    {
         Ok(_) => (
-            output::mutation_done("mytags.create", serde_json::json!({
-                "id": new_id,
-                "name": name,
-                "kind": kind,
-                "parent_id": parent_id,
-                "seq": max_seq + 1,
-            })),
+            output::mutation_done(
+                "mytags.create",
+                serde_json::json!({
+                    "id": new_id,
+                    "name": name,
+                    "kind": kind,
+                    "parent_id": parent_id,
+                    "seq": max_seq + 1,
+                }),
+            ),
             output::EXIT_OK,
         ),
         Err(e) => db_error(e),
@@ -1945,19 +2565,30 @@ async fn handle_mytags_create(
 }
 
 async fn handle_mytags_delete(
-    pool: &SqlitePool, tag_id: &str, execute: bool,
+    pool: &SqlitePool,
+    tag_id: &str,
+    execute: bool,
 ) -> (serde_json::Value, i32) {
     let tag = match sqlx::query_as::<_, MyTagRow>(
         "SELECT ID as id, Seq as seq, Name as name, Attribute as attribute, ParentID as parent_id \
-         FROM djmdMyTag WHERE ID = ? AND rb_local_deleted = 0"
-    ).bind(tag_id).fetch_optional(pool).await {
+         FROM djmdMyTag WHERE ID = ? AND rb_local_deleted = 0",
+    )
+    .bind(tag_id)
+    .fetch_optional(pool)
+    .await
+    {
         Ok(Some(t)) => t,
-        Ok(None) => return (
-            output::error("not_found", output::EXIT_NOT_FOUND,
-                &format!("My Tag not found: {}", tag_id),
-                Some("Use 'rbx mytags list' to see available tags")),
-            output::EXIT_NOT_FOUND,
-        ),
+        Ok(None) => {
+            return (
+                output::error(
+                    "not_found",
+                    output::EXIT_NOT_FOUND,
+                    &format!("My Tag not found: {}", tag_id),
+                    Some("Use 'rbx mytags list' to see available tags"),
+                ),
+                output::EXIT_NOT_FOUND,
+            )
+        }
         Err(e) => return db_error(e),
     };
 
@@ -1968,8 +2599,7 @@ async fn handle_mytags_delete(
 
     if !execute {
         return (
-            output::mutation_dry_run("mytags.delete", plan,
-                "Add --execute to apply"),
+            output::mutation_dry_run("mytags.delete", plan, "Add --execute to apply"),
             output::EXIT_OK,
         );
     }
@@ -1981,13 +2611,19 @@ async fn handle_mytags_delete(
         "UPDATE djmdSongMyTag SET rb_local_deleted = 1, updated_at = ? WHERE MyTagID = ? AND rb_local_deleted = 0"
     ).bind(&now).bind(tag_id).execute(pool).await;
 
-    match sqlx::query(
-        "UPDATE djmdMyTag SET rb_local_deleted = 1, updated_at = ? WHERE ID = ?"
-    ).bind(&now).bind(tag_id).execute(pool).await {
+    match sqlx::query("UPDATE djmdMyTag SET rb_local_deleted = 1, updated_at = ? WHERE ID = ?")
+        .bind(&now)
+        .bind(tag_id)
+        .execute(pool)
+        .await
+    {
         Ok(_) => (
-            output::mutation_done("mytags.delete", serde_json::json!({
-                "tag": tag.to_json(),
-            })),
+            output::mutation_done(
+                "mytags.delete",
+                serde_json::json!({
+                    "tag": tag.to_json(),
+                }),
+            ),
             output::EXIT_OK,
         ),
         Err(e) => db_error(e),
@@ -2071,45 +2707,66 @@ fn is_read_only_statement(sql: &str) -> bool {
     matches!(first.as_str(), "SELECT" | "WITH" | "PRAGMA" | "EXPLAIN")
 }
 
-async fn handle_query(pool: &SqlitePool, sql: &str, unsafe_write: bool) -> (serde_json::Value, i32) {
+async fn handle_query(
+    pool: &SqlitePool,
+    sql: &str,
+    unsafe_write: bool,
+) -> (serde_json::Value, i32) {
     if !unsafe_write && !is_read_only_statement(sql) {
         return (
             output::error(
                 "readonly",
                 output::EXIT_USAGE,
                 "query allows only SELECT / WITH / PRAGMA / EXPLAIN (single statement) by default",
-                Some("Prefer a dedicated command (they maintain rekordbox invariants: \
+                Some(
+                    "Prefer a dedicated command (they maintain rekordbox invariants: \
                       USN allocation, timestamp format, numeric IDs, masterPlaylists6.xml sync). \
-                      If you really need raw SQL writes, re-run with --unsafe-write"),
+                      If you really need raw SQL writes, re-run with --unsafe-write",
+                ),
             ),
             output::EXIT_USAGE,
         );
     }
     match sqlx::query(sql).fetch_all(pool).await {
         Ok(rows) => {
-            let items: Vec<serde_json::Value> = rows.iter().map(|row| {
-                let cols = row.columns();
-                let mut obj = serde_json::Map::new();
-                for col in cols {
-                    let name = col.name().to_string();
-                    let val = row.try_get::<String, _>(col.ordinal())
-                        .map(serde_json::Value::String)
-                        .or_else(|_| row.try_get::<i64, _>(col.ordinal()).map(|v| serde_json::json!(v)))
-                        .or_else(|_| row.try_get::<f64, _>(col.ordinal()).map(|v| serde_json::json!(v)))
-                        .unwrap_or(serde_json::Value::Null);
-                    obj.insert(name, val);
-                }
-                serde_json::Value::Object(obj)
-            }).collect();
-            (output::success("query_result", serde_json::Value::Array(items)), output::EXIT_OK)
+            let items: Vec<serde_json::Value> = rows
+                .iter()
+                .map(|row| {
+                    let cols = row.columns();
+                    let mut obj = serde_json::Map::new();
+                    for col in cols {
+                        let name = col.name().to_string();
+                        let val = row
+                            .try_get::<String, _>(col.ordinal())
+                            .map(serde_json::Value::String)
+                            .or_else(|_| {
+                                row.try_get::<i64, _>(col.ordinal())
+                                    .map(|v| serde_json::json!(v))
+                            })
+                            .or_else(|_| {
+                                row.try_get::<f64, _>(col.ordinal())
+                                    .map(|v| serde_json::json!(v))
+                            })
+                            .unwrap_or(serde_json::Value::Null);
+                        obj.insert(name, val);
+                    }
+                    serde_json::Value::Object(obj)
+                })
+                .collect();
+            (
+                output::success("query_result", serde_json::Value::Array(items)),
+                output::EXIT_OK,
+            )
         }
         Err(e) if e.to_string().contains("readonly database") => (
             output::error(
                 "readonly",
                 output::EXIT_USAGE,
                 "query runs read-only by default; this statement needs write access",
-                Some("Prefer a dedicated command (they maintain rekordbox invariants). \
-                      If you really need raw SQL, re-run with --unsafe-write"),
+                Some(
+                    "Prefer a dedicated command (they maintain rekordbox invariants). \
+                      If you really need raw SQL, re-run with --unsafe-write",
+                ),
             ),
             output::EXIT_USAGE,
         ),
@@ -2416,9 +3073,14 @@ fn describe_root() -> serde_json::Value {
 }
 
 fn describe_resource(name: &str, actions: &[(&str, &str)]) -> serde_json::Value {
-    let acts: Vec<_> = actions.iter().map(|(n, d)| serde_json::json!({
-        "name": n, "description": d,
-    })).collect();
+    let acts: Vec<_> = actions
+        .iter()
+        .map(|(n, d)| {
+            serde_json::json!({
+                "name": n, "description": d,
+            })
+        })
+        .collect();
     serde_json::json!({
         "schema_version": output::SCHEMA_VERSION,
         "kind": "describe",
@@ -2428,8 +3090,10 @@ fn describe_resource(name: &str, actions: &[(&str, &str)]) -> serde_json::Value 
 }
 
 fn describe_command(
-    command: &str, flags: &[serde_json::Value],
-    output_schema: &serde_json::Value, examples: &[&str],
+    command: &str,
+    flags: &[serde_json::Value],
+    output_schema: &serde_json::Value,
+    examples: &[&str],
 ) -> serde_json::Value {
     serde_json::json!({
         "schema_version": output::SCHEMA_VERSION,

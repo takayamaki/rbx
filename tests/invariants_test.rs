@@ -22,7 +22,11 @@ async fn generate_numeric_id_produces_28bit_numeric_strings() {
 
     for _ in 0..50 {
         let id = generate_numeric_id(&pool, "djmdPlaylist").await.unwrap();
-        assert!(id.chars().all(|c| c.is_ascii_digit()), "non-numeric ID: {}", id);
+        assert!(
+            id.chars().all(|c| c.is_ascii_digit()),
+            "non-numeric ID: {}",
+            id
+        );
         let n: u64 = id.parse().unwrap();
         assert!(n >= 100, "ID below minimum: {}", n);
         assert!(n < (1 << 28), "ID exceeds 28 bits: {}", n);
