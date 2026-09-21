@@ -1,6 +1,6 @@
 [package]
 name = "rbx"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 description = "CLI tool for querying and manipulating rekordbox master.db"
 authors = ["fusagiko / takayamaki"]
