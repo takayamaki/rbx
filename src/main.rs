@@ -87,8 +87,27 @@ enum TracksAction {
         id: String,
         #[arg(long)]
         title: Option<String>,
+        /// Artist name (resolved or created in djmdArtist; "" clears)
         #[arg(long)]
         artist: Option<String>,
+        /// Genre name (resolved or created in djmdGenre; "" clears)
+        #[arg(long)]
+        genre: Option<String>,
+        /// Album name (resolved or created in djmdAlbum; "" clears)
+        #[arg(long)]
+        album: Option<String>,
+        /// Track number within the disc
+        #[arg(long)]
+        track_no: Option<i32>,
+        /// Disc number
+        #[arg(long)]
+        disc_no: Option<i32>,
+        /// Release year (e.g. 2018)
+        #[arg(long)]
+        year: Option<i32>,
+        /// Full file path as rekordbox stores it (e.g. "F:/Music/a.m4a"); FileNameL follows
+        #[arg(long)]
+        path: Option<String>,
         /// BPM as decimal (e.g. 128.0)
         #[arg(long)]
         bpm: Option<f64>,
@@ -613,8 +632,9 @@ async fn handle_tracks(pool: &SqlitePool, action: TracksAction) -> (serde_json::
         TracksAction::Filter { bpm_min, bpm_max, key, tag } => {
             handle_tracks_filter(pool, bpm_min, bpm_max, key, tag).await
         }
-        TracksAction::Update { id, title, artist, bpm, key, rating, comment, execute } => {
-            handle_tracks_update(pool, &id, title, artist, bpm, key, rating, comment, execute).await
+        TracksAction::Update { id, title, artist, genre, album, track_no, disc_no, year, path, bpm, key, rating, comment, execute } => {
+            let fields = TrackFields { title, artist, genre, album, track_no, disc_no, year, path, bpm, key, rating, comment };
+            handle_tracks_update(pool, &id, fields, execute).await
         }
         TracksAction::Mytags { action } => handle_track_mytags(pool, action).await,
         TracksAction::Cues { action } => handle_track_cues(pool, action).await,
@@ -930,19 +950,99 @@ async fn resolve_or_create_artist(pool: &SqlitePool, name: &str) -> Result<Strin
     Ok(new_id)
 }
 
+/// Resolves a djmdGenre row by name, creating it in native format when missing.
+async fn resolve_or_create_genre(pool: &SqlitePool, name: &str) -> Result<String, sqlx::Error> {
+    if let Some((id,)) = sqlx::query_as::<_, (String,)>(
+        "SELECT ID FROM djmdGenre WHERE Name = ?"
+    ).bind(name).fetch_optional(pool).await? {
+        return Ok(id);
+    }
+    let new_id = generate_numeric_id(pool, "djmdGenre").await?;
+    let new_uuid = Uuid::new_v4().to_string();
+    let now = now_datetime();
+    let usn = allocate_usns(pool, 1).await?;
+    sqlx::query(
+        "INSERT INTO djmdGenre (ID, Name, UUID, \
+         rb_data_status, rb_local_data_status, rb_local_deleted, rb_local_synced, rb_local_usn, \
+         created_at, updated_at) \
+         VALUES (?, ?, ?, 0, 0, 0, 0, ?, ?, ?)"
+    ).bind(&new_id).bind(name).bind(&new_uuid).bind(usn).bind(&now).bind(&now)
+    .execute(pool).await?;
+    Ok(new_id)
+}
+
+/// Resolves a djmdAlbum row by name, creating it in native format when missing.
+/// rekordbox fills AlbumArtistID / ImagePath / SearchStr with "" and Compilation with 0 for new albums.
+async fn resolve_or_create_album(pool: &SqlitePool, name: &str) -> Result<String, sqlx::Error> {
+    if let Some((id,)) = sqlx::query_as::<_, (String,)>(
+        "SELECT ID FROM djmdAlbum WHERE Name = ?"
+    ).bind(name).fetch_optional(pool).await? {
+        return Ok(id);
+    }
+    let new_id = generate_numeric_id(pool, "djmdAlbum").await?;
+    let new_uuid = Uuid::new_v4().to_string();
+    let now = now_datetime();
+    let usn = allocate_usns(pool, 1).await?;
+    sqlx::query(
+        "INSERT INTO djmdAlbum (ID, Name, AlbumArtistID, ImagePath, Compilation, SearchStr, UUID, \
+         rb_data_status, rb_local_data_status, rb_local_deleted, rb_local_synced, rb_local_usn, \
+         created_at, updated_at) \
+         VALUES (?, ?, '', '', 0, '', ?, 0, 0, 0, 0, ?, ?, ?)"
+    ).bind(&new_id).bind(name).bind(&new_uuid).bind(usn).bind(&now).bind(&now)
+    .execute(pool).await?;
+    Ok(new_id)
+}
+
+/// Resolves the FK value for a name-keyed table: "" clears the column
+/// (rekordbox stores "no artist" etc. as an empty ID), anything else is resolved or created.
+async fn resolve_fk<F, Fut>(name: &str, resolve: F) -> Result<String, sqlx::Error>
+where
+    F: FnOnce(String) -> Fut,
+    Fut: std::future::Future<Output = Result<String, sqlx::Error>>,
+{
+    if name.is_empty() { Ok(String::new()) } else { resolve(name.to_string()).await }
+}
+
 async fn resolve_key_id(pool: &SqlitePool, key_name: &str) -> Result<Option<String>, sqlx::Error> {
     sqlx::query_as::<_, (String,)>(
         "SELECT ID FROM djmdKey WHERE ScaleName = ?"
     ).bind(key_name).fetch_optional(pool).await.map(|r| r.map(|(id,)| id))
 }
 
-#[allow(clippy::too_many_arguments)]
+/// Fields accepted by `tracks update`. `None` = leave the column alone.
+#[derive(Default)]
+struct TrackFields {
+    title: Option<String>,
+    artist: Option<String>,
+    genre: Option<String>,
+    album: Option<String>,
+    track_no: Option<i32>,
+    disc_no: Option<i32>,
+    year: Option<i32>,
+    path: Option<String>,
+    bpm: Option<f64>,
+    key: Option<String>,
+    rating: Option<i32>,
+    comment: Option<String>,
+}
+
+impl TrackFields {
+    fn is_empty(&self) -> bool {
+        self.title.is_none() && self.artist.is_none() && self.genre.is_none() && self.album.is_none()
+            && self.track_no.is_none() && self.disc_no.is_none() && self.year.is_none() && self.path.is_none()
+            && self.bpm.is_none() && self.key.is_none() && self.rating.is_none() && self.comment.is_none()
+    }
+}
+
+/// rekordbox stores the basename of FolderPath in FileNameL; keep them in sync.
+fn file_name_of(path: &str) -> &str {
+    path.rsplit(['/', '\\']).next().unwrap_or(path)
+}
+
 async fn handle_tracks_update(
-    pool: &SqlitePool, track_id: &str,
-    title: Option<String>, artist: Option<String>, bpm: Option<f64>,
-    key: Option<String>, rating: Option<i32>, comment: Option<String>,
-    execute: bool,
+    pool: &SqlitePool, track_id: &str, fields: TrackFields, execute: bool,
 ) -> (serde_json::Value, i32) {
+    let TrackFields { title, artist, genre, album, track_no, disc_no, year, path, bpm, key, rating, comment } = &fields;
     // Verify track exists
     let (cur_title, cur_artist) = match resolve_track_summary(pool, track_id).await {
         Ok(Some(t)) => t,
@@ -955,13 +1055,11 @@ async fn handle_tracks_update(
         Err(e) => return db_error(e),
     };
 
-    if title.is_none() && artist.is_none() && bpm.is_none()
-        && key.is_none() && rating.is_none() && comment.is_none()
-    {
+    if fields.is_empty() {
         return (
             output::error("usage", output::EXIT_USAGE,
                 "No fields specified to update",
-                Some("Use --title, --artist, --bpm, --key, --rating, or --comment")),
+                Some("Use --title, --artist, --genre, --album, --track-no, --disc-no, --year, --path, --bpm, --key, --rating, or --comment")),
             output::EXIT_USAGE,
         );
     }
@@ -980,7 +1078,7 @@ async fn handle_tracks_update(
         }
     }
 
-    if let Some(r) = rating {
+    if let Some(r) = *rating {
         if !(0..=5).contains(&r) {
             return (
                 output::error("validation", output::EXIT_CONFLICT,
@@ -991,12 +1089,18 @@ async fn handle_tracks_update(
     }
 
     let mut changes = serde_json::Map::new();
-    if let Some(ref v) = title { changes.insert("title".into(), serde_json::json!(v)); }
-    if let Some(ref v) = artist { changes.insert("artist".into(), serde_json::json!(v)); }
+    if let Some(v) = title { changes.insert("title".into(), serde_json::json!(v)); }
+    if let Some(v) = artist { changes.insert("artist".into(), serde_json::json!(v)); }
+    if let Some(v) = genre { changes.insert("genre".into(), serde_json::json!(v)); }
+    if let Some(v) = album { changes.insert("album".into(), serde_json::json!(v)); }
+    if let Some(v) = track_no { changes.insert("track_no".into(), serde_json::json!(v)); }
+    if let Some(v) = disc_no { changes.insert("disc_no".into(), serde_json::json!(v)); }
+    if let Some(v) = year { changes.insert("year".into(), serde_json::json!(v)); }
+    if let Some(v) = path { changes.insert("path".into(), serde_json::json!(v)); }
     if let Some(v) = bpm { changes.insert("bpm".into(), serde_json::json!(v)); }
-    if let Some(ref v) = key { changes.insert("key".into(), serde_json::json!(v)); }
+    if let Some(v) = key { changes.insert("key".into(), serde_json::json!(v)); }
     if let Some(v) = rating { changes.insert("rating".into(), serde_json::json!(v)); }
-    if let Some(ref v) = comment { changes.insert("comment".into(), serde_json::json!(v)); }
+    if let Some(v) = comment { changes.insert("comment".into(), serde_json::json!(v)); }
 
     let plan = serde_json::json!({
         "action": "update_track",
@@ -1012,14 +1116,28 @@ async fn handle_tracks_update(
     }
 
     // Resolve FK values before building the query
-    let artist_id = if let Some(ref v) = artist {
-        match resolve_or_create_artist(pool, v).await {
+    let artist_id = if let Some(v) = artist {
+        match resolve_fk(v, |n| async move { resolve_or_create_artist(pool, &n).await }).await {
             Ok(id) => Some(id),
             Err(e) => return db_error(e),
         }
     } else { None };
 
-    let key_id = if let Some(ref v) = key {
+    let genre_id = if let Some(v) = genre {
+        match resolve_fk(v, |n| async move { resolve_or_create_genre(pool, &n).await }).await {
+            Ok(id) => Some(id),
+            Err(e) => return db_error(e),
+        }
+    } else { None };
+
+    let album_id = if let Some(v) = album {
+        match resolve_fk(v, |n| async move { resolve_or_create_album(pool, &n).await }).await {
+            Ok(id) => Some(id),
+            Err(e) => return db_error(e),
+        }
+    } else { None };
+
+    let key_id = if let Some(v) = key {
         match resolve_key_id(pool, v).await {
             Ok(Some(id)) => Some(id),
             _ => unreachable!(),
@@ -1039,12 +1157,21 @@ async fn handle_tracks_update(
         };
     }
 
-    if let Some(ref v) = title { update_field!("Title", v); }
+    if let Some(v) = title { update_field!("Title", v); }
     if let Some(ref v) = artist_id { update_field!("ArtistID", v); }
+    if let Some(ref v) = genre_id { update_field!("GenreID", v); }
+    if let Some(ref v) = album_id { update_field!("AlbumID", v); }
+    if let Some(v) = track_no { update_field!("TrackNo", v); }
+    if let Some(v) = disc_no { update_field!("DiscNo", v); }
+    if let Some(v) = year { update_field!("ReleaseYear", v); }
+    if let Some(v) = path {
+        update_field!("FolderPath", v);
+        update_field!("FileNameL", file_name_of(v));
+    }
     if let Some(v) = bpm { let bpm_int = (v * 100.0) as i32; update_field!("BPM", &bpm_int); }
     if let Some(ref v) = key_id { update_field!("KeyID", v); }
-    if let Some(v) = rating { update_field!("Rating", &v); }
-    if let Some(ref v) = comment { update_field!("Commnt", v); }
+    if let Some(v) = rating { update_field!("Rating", v); }
+    if let Some(v) = comment { update_field!("Commnt", v); }
 
     if !errors.is_empty() {
         return db_error(sqlx::Error::Protocol(errors.join("; ")));
@@ -2037,7 +2164,13 @@ fn handle_describe(resource: Option<String>, action: Option<String>) -> serde_js
         (Some("tracks"), Some("update")) => describe_command("tracks update", &[
             flag("id", "string", true, "Track ID"),
             flag("--title", "string", false, "Track title"),
-            flag("--artist", "string", false, "Artist name (resolved or created in djmdArtist)"),
+            flag("--artist", "string", false, "Artist name (resolved or created in djmdArtist; \"\" clears)"),
+            flag("--genre", "string", false, "Genre name (resolved or created in djmdGenre; \"\" clears)"),
+            flag("--album", "string", false, "Album name (resolved or created in djmdAlbum; \"\" clears)"),
+            flag("--track-no", "integer", false, "Track number within the disc"),
+            flag("--disc-no", "integer", false, "Disc number"),
+            flag("--year", "integer", false, "Release year"),
+            flag("--path", "string", false, "Full file path as rekordbox stores it (FolderPath; FileNameL follows its basename)"),
             flag("--bpm", "number", false, "BPM as decimal (e.g. 128.0)"),
             flag("--key", "string", false, "Musical key (e.g. '8A', '1B')"),
             flag("--rating", "integer", false, "Rating (0-5)"),

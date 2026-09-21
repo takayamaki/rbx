@@ -85,6 +85,12 @@ rbx tracks filter --bpm-min 125 --bpm-max 135 --key 8A --tag TAG_ID
 rbx tracks update <id> --title '...' --artist '...' --bpm 128.0 \
     --key 8A --rating 4 --comment '...'
                                        # update track fields (dry-run)
+rbx tracks update <id> --genre '...' --album '...' \
+    --track-no 3 --disc-no 1 --year 2018
+                                       # artist / genre / album are resolved by name
+                                       # (rows created when missing; "" clears the column)
+rbx tracks update <id> --path 'F:/Music/new name.m4a'
+                                       # file moved on disk: rewrite FolderPath (FileNameL follows)
 rbx tracks update <id> --bpm 130.0 --execute
                                        # update track fields (apply)
 ```
