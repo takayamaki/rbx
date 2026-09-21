@@ -854,4 +854,21 @@ async fn bulk_update_rejects_duplicate_ids() {
 
 /// `-` reads the plan from stdin.
 #[tokio::test]
-async fn bulk_update_reads_the_plan_from_stdin() {}
+async fn bulk_update_reads_the_plan_from_stdin() {
+    let (db_path, _dir) = common::setup_db().await;
+
+    let assert = rbx_cmd(&db_path)
+        .args(["tracks", "bulk-update", "-", "--execute"])
+        .write_stdin(r#"[{"id": "101", "fields": {"comment": "from stdin"}}]"#)
+        .assert()
+        .code(0);
+    let json = stdout_json(&assert);
+    assert_eq!(json["result"]["updated"], 1);
+
+    let pool = common::open_pool(&db_path).await;
+    let (comment,): (String,) = sqlx::query_as("SELECT Commnt FROM djmdContent WHERE ID = '101'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(comment, "from stdin");
+}

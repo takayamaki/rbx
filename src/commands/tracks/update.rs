@@ -416,7 +416,13 @@ struct BulkRow {
 }
 
 fn read_plan(file: &str) -> Result<Vec<BulkRow>, (serde_json::Value, i32)> {
-    let text = std::fs::read_to_string(file).map_err(|e| {
+    let text = if file == "-" {
+        let mut buf = String::new();
+        std::io::Read::read_to_string(&mut std::io::stdin(), &mut buf).map(|_| buf)
+    } else {
+        std::fs::read_to_string(file)
+    };
+    let text = text.map_err(|e| {
         (
             output::error(
                 "usage",
