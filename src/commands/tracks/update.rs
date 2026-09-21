@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use rbx::helpers::{allocate_usns, generate_numeric_id, now_datetime};
 use rbx::output;
 use serde::Deserialize;
@@ -242,35 +244,63 @@ async fn validate(
     Ok(summary)
 }
 
+/// Name → ID of artist / genre / album rows already resolved in this run, so a
+/// name shared by many rows is looked up (or created) once.
+#[derive(Default)]
+struct FkCache {
+    artists: HashMap<String, String>,
+    genres: HashMap<String, String>,
+    albums: HashMap<String, String>,
+}
+
+async fn cached_fk<F, Fut>(
+    cache: &mut HashMap<String, String>,
+    name: &str,
+    resolve: F,
+) -> Result<String, sqlx::Error>
+where
+    F: FnOnce(String) -> Fut,
+    Fut: std::future::Future<Output = Result<String, sqlx::Error>>,
+{
+    if let Some(id) = cache.get(name) {
+        return Ok(id.clone());
+    }
+    let id = resolve_fk(name, resolve).await?;
+    cache.insert(name.to_string(), id.clone());
+    Ok(id)
+}
+
 /// Writes the fields of one validated track. Artist / genre / album names are
 /// resolved or created first.
-async fn apply(pool: &SqlitePool, track_id: &str, fields: &TrackFields) -> Result<(), sqlx::Error> {
+async fn apply(
+    pool: &SqlitePool,
+    track_id: &str,
+    fields: &TrackFields,
+    cache: &mut FkCache,
+) -> Result<(), sqlx::Error> {
     let artist_id = match &fields.artist {
         Some(v) => Some(
-            resolve_fk(
-                v,
-                |n| async move { resolve_or_create_artist(pool, &n).await },
-            )
+            cached_fk(&mut cache.artists, v, |n| async move {
+                resolve_or_create_artist(pool, &n).await
+            })
             .await?,
         ),
         None => None,
     };
     let genre_id = match &fields.genre {
         Some(v) => Some(
-            resolve_fk(
-                v,
-                |n| async move { resolve_or_create_genre(pool, &n).await },
-            )
+            cached_fk(&mut cache.genres, v, |n| async move {
+                resolve_or_create_genre(pool, &n).await
+            })
             .await?,
         ),
         None => None,
     };
     let album_id = match &fields.album {
         Some(v) => Some(
-            resolve_fk(
-                v,
-                |n| async move { resolve_or_create_album(pool, &n).await },
-            )
+            cached_fk(&mut cache.albums, v, |n| async move {
+                resolve_or_create_album(pool, &n).await
+            })
             .await?,
         ),
         None => None,
@@ -363,7 +393,7 @@ pub(crate) async fn handle_tracks_update(
         );
     }
 
-    if let Err(e) = apply(pool, track_id, &fields).await {
+    if let Err(e) = apply(pool, track_id, &fields, &mut FkCache::default()).await {
         return db_error(e);
     }
     (
@@ -501,15 +531,21 @@ pub(crate) async fn handle_tracks_bulk_update(
         );
     }
 
+    // What apply() is about to create, reported back so the caller can review it
+    let created = match planned_creates(pool, &rows).await {
+        Ok(c) => c,
+        Err(e) => return db_error(e),
+    };
+    let mut cache = FkCache::default();
     for row in &rows {
-        if let Err(e) = apply(pool, &row.id, &row.fields).await {
+        if let Err(e) = apply(pool, &row.id, &row.fields, &mut cache).await {
             return db_error(e);
         }
     }
     (
         output::mutation_done(
             "tracks.bulk_update",
-            serde_json::json!({ "updated": rows.len() }),
+            serde_json::json!({ "updated": rows.len(), "created": created }),
         ),
         output::EXIT_OK,
     )

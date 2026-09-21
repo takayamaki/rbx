@@ -687,7 +687,65 @@ async fn bulk_update_dry_run_writes_nothing_and_lists_rows_to_create() {
 /// The same new artist name on many rows creates exactly one djmdArtist row
 /// (in native format) and every row points at it.
 #[tokio::test]
-async fn bulk_update_creates_a_shared_artist_row_once() {}
+async fn bulk_update_creates_a_shared_artist_row_once() {
+    let (db_path, dir) = common::setup_db().await;
+    let plan = write_plan(
+        &dir,
+        r#"[
+          {"id": "101", "fields": {"artist": "Shared New Artist"}},
+          {"id": "102", "fields": {"artist": "Shared New Artist"}}
+        ]"#,
+    );
+
+    let assert = rbx_cmd(&db_path)
+        .args(["tracks", "bulk-update", plan.to_str().unwrap(), "--execute"])
+        .assert()
+        .code(0);
+    let json = stdout_json(&assert);
+    assert_eq!(
+        json["result"]["created"]["artists"],
+        serde_json::json!(["Shared New Artist"])
+    );
+
+    let pool = common::open_pool(&db_path).await;
+    let rows: Vec<(String, String, i64, String)> = sqlx::query_as(
+        "SELECT ID, UUID, rb_local_usn, created_at FROM djmdArtist WHERE Name = 'Shared New Artist'",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(rows.len(), 1, "one artist row for the whole batch");
+    let (artist_id, uuid, usn, created_at) = &rows[0];
+    assert!(
+        artist_id.chars().all(|c| c.is_ascii_digit()),
+        "non-numeric ID: {}",
+        artist_id
+    );
+    assert!(!uuid.is_empty());
+    assert!(
+        ts_regex().is_match(created_at),
+        "bad timestamp: {}",
+        created_at
+    );
+    let (counter,): (i64,) =
+        sqlx::query_as("SELECT int_1 FROM agentRegistry WHERE registry_id = 'localUpdateCount'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(
+        *usn <= counter,
+        "row USN {} exceeds counter {}",
+        usn,
+        counter
+    );
+
+    let ids: Vec<(String,)> =
+        sqlx::query_as("SELECT ArtistID FROM djmdContent WHERE ID IN ('101', '102') ORDER BY ID")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(ids, vec![(artist_id.clone(),), (artist_id.clone(),)]);
+}
 
 /// One unknown track ID rejects the whole batch: nothing is written and the
 /// error lists every bad row by index and id.
