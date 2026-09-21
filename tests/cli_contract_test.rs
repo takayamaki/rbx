@@ -750,7 +750,46 @@ async fn bulk_update_creates_a_shared_artist_row_once() {
 /// One unknown track ID rejects the whole batch: nothing is written and the
 /// error lists every bad row by index and id.
 #[tokio::test]
-async fn bulk_update_rejects_the_whole_batch_when_a_track_is_missing() {}
+async fn bulk_update_rejects_the_whole_batch_when_a_track_is_missing() {
+    let (db_path, dir) = common::setup_db().await;
+    let plan = write_plan(
+        &dir,
+        r#"[
+          {"id": "101", "fields": {"title": "Changed"}},
+          {"id": "999", "fields": {"title": "No such track"}},
+          {"id": "102", "fields": {"key": "13Z"}}
+        ]"#,
+    );
+
+    let assert = rbx_cmd(&db_path)
+        .args(["tracks", "bulk-update", plan.to_str().unwrap(), "--execute"])
+        .assert()
+        .code(3);
+    let json = stdout_json(&assert);
+    assert_eq!(json["kind"], "error");
+    assert_eq!(json["error"]["category"], "not_found");
+    let errors = json["error"]["errors"].as_array().unwrap();
+    assert_eq!(errors.len(), 2, "every bad row is reported: {}", json);
+    assert_eq!(
+        (&errors[0]["index"], &errors[0]["id"]),
+        (&serde_json::json!(1), &serde_json::json!("999"))
+    );
+    assert_eq!(
+        (&errors[1]["index"], &errors[1]["id"]),
+        (&serde_json::json!(2), &serde_json::json!("102"))
+    );
+    assert!(errors[1]["message"].as_str().unwrap().contains("13Z"));
+
+    let pool = common::open_pool(&db_path).await;
+    let (title,): (String,) = sqlx::query_as("SELECT Title FROM djmdContent WHERE ID = '101'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        title, "Track One",
+        "a rejected batch must not write any row"
+    );
+}
 
 /// A field name that is not a `tracks update` flag (e.g. `trackNo`) is a
 /// usage error, so a plan generator with the wrong key names fails loudly.

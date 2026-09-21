@@ -493,6 +493,51 @@ async fn planned_creates(
     Ok(serde_json::json!({ "artists": artists, "genres": genres, "albums": albums }))
 }
 
+/// A row that failed validation, with the error `tracks update` would have given it.
+struct RowError {
+    index: usize,
+    id: String,
+    envelope: serde_json::Value,
+    code: i32,
+}
+
+/// One error for the whole batch. The exit code is the most specific one
+/// among the rows (not_found beats usage beats the rest), and every bad
+/// row is listed under `error.errors` with its index in the plan.
+fn rows_rejected(errors: Vec<RowError>, total: usize) -> (serde_json::Value, i32) {
+    let code = [output::EXIT_NOT_FOUND, output::EXIT_USAGE]
+        .into_iter()
+        .find(|c| errors.iter().any(|e| e.code == *c))
+        .unwrap_or(errors[0].code);
+    let lead = errors.iter().find(|e| e.code == code).unwrap();
+    let category = lead.envelope["error"]["category"]
+        .as_str()
+        .unwrap_or("validation");
+    let mut out = output::error(
+        category,
+        code,
+        &format!(
+            "{} of {} rows rejected; nothing was written",
+            errors.len(),
+            total
+        ),
+        Some("Fix the rows listed under error.errors and run again"),
+    );
+    let list: Vec<_> = errors
+        .iter()
+        .map(|e| {
+            serde_json::json!({
+                "index": e.index,
+                "id": e.id,
+                "category": e.envelope["error"]["category"],
+                "message": e.envelope["error"]["message"],
+            })
+        })
+        .collect();
+    out["error"]["errors"] = serde_json::json!(list);
+    (out, code)
+}
+
 pub(crate) async fn handle_tracks_bulk_update(
     pool: &SqlitePool,
     file: &str,
@@ -503,15 +548,25 @@ pub(crate) async fn handle_tracks_bulk_update(
         Err(e) => return e,
     };
 
+    // Validate every row before writing anything, and report every bad row at once
     let mut items = Vec::with_capacity(rows.len());
-    for row in &rows {
+    let mut errors = Vec::new();
+    for (index, row) in rows.iter().enumerate() {
         match validate(pool, &row.id, &row.fields).await {
             Ok((title, artist)) => items.push(serde_json::json!({
                 "track": { "id": row.id, "title": title, "artist": artist },
                 "changes": serde_json::Value::Object(row.fields.changes()),
             })),
-            Err(e) => return e,
+            Err((envelope, code)) => errors.push(RowError {
+                index,
+                id: row.id.clone(),
+                envelope,
+                code,
+            }),
         }
+    }
+    if !errors.is_empty() {
+        return rows_rejected(errors, rows.len());
     }
 
     if !execute {
