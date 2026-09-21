@@ -552,7 +552,23 @@ pub(crate) async fn handle_tracks_bulk_update(
     // Validate every row before writing anything, and report every bad row at once
     let mut items = Vec::with_capacity(rows.len());
     let mut errors = Vec::new();
+    let mut seen = std::collections::HashSet::new();
     for (index, row) in rows.iter().enumerate() {
+        if !seen.insert(row.id.as_str()) {
+            // the same track twice is almost always a bug in the plan generator
+            errors.push(RowError {
+                index,
+                id: row.id.clone(),
+                envelope: output::error(
+                    "conflict",
+                    output::EXIT_CONFLICT,
+                    &format!("Track {} appears more than once in the plan", row.id),
+                    None,
+                ),
+                code: output::EXIT_CONFLICT,
+            });
+            continue;
+        }
         match validate(pool, &row.id, &row.fields).await {
             Ok((title, artist)) => items.push(serde_json::json!({
                 "track": { "id": row.id, "title": title, "artist": artist },

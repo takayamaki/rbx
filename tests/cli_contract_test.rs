@@ -817,7 +817,40 @@ async fn bulk_update_rejects_unknown_field_names() {
 /// The same track ID twice in one plan is a conflict, not last-wins: it is
 /// almost always a bug in the plan generator.
 #[tokio::test]
-async fn bulk_update_rejects_duplicate_ids() {}
+async fn bulk_update_rejects_duplicate_ids() {
+    let (db_path, dir) = common::setup_db().await;
+    let plan = write_plan(
+        &dir,
+        r#"[
+          {"id": "101", "fields": {"title": "First"}},
+          {"id": "102", "fields": {"title": "Other"}},
+          {"id": "101", "fields": {"title": "Second"}}
+        ]"#,
+    );
+
+    let assert = rbx_cmd(&db_path)
+        .args(["tracks", "bulk-update", plan.to_str().unwrap(), "--execute"])
+        .assert()
+        .code(5);
+    let json = stdout_json(&assert);
+    assert_eq!(json["error"]["category"], "conflict");
+    let errors = json["error"]["errors"].as_array().unwrap();
+    assert_eq!(errors.len(), 1, "{}", json);
+    assert_eq!(
+        (&errors[0]["index"], &errors[0]["id"]),
+        (&serde_json::json!(2), &serde_json::json!("101"))
+    );
+
+    let pool = common::open_pool(&db_path).await;
+    let (title,): (String,) = sqlx::query_as("SELECT Title FROM djmdContent WHERE ID = '101'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        title, "Track One",
+        "neither copy of the duplicate may be applied"
+    );
+}
 
 /// `-` reads the plan from stdin.
 #[tokio::test]
