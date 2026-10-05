@@ -158,6 +158,10 @@ impl CueRow {
         &self.content_id
     }
 
+    pub(crate) fn is_loop(&self) -> bool {
+        self.out_msec.is_some_and(|v| v >= 0)
+    }
+
     pub(crate) fn is_memory(&self) -> bool {
         matches!(self.kind, Some(0 | 4))
     }

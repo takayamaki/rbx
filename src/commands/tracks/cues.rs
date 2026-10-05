@@ -217,8 +217,17 @@ pub(crate) async fn handle_track_cues(
             msec,
             comment,
             color,
+            out_msec,
             execute,
-        } => handle_track_cue_update(pool, &cue_id, msec, comment, color, execute).await,
+        } => {
+            let change = CueChange {
+                msec,
+                comment,
+                color,
+                out_msec,
+            };
+            handle_track_cue_update(pool, &cue_id, change, execute).await
+        }
         TrackCuesAction::Delete { cue_id, execute } => {
             handle_track_cue_delete(pool, &cue_id, execute).await
         }
@@ -544,14 +553,26 @@ async fn handle_track_cue_add(
     }
 }
 
-async fn handle_track_cue_update(
-    pool: &SqlitePool,
-    cue_id: &str,
+/// The flags of `cues update`.
+struct CueChange {
     msec: Option<i64>,
     comment: Option<String>,
     color: Option<String>,
+    out_msec: Option<i64>,
+}
+
+async fn handle_track_cue_update(
+    pool: &SqlitePool,
+    cue_id: &str,
+    change: CueChange,
     execute: bool,
 ) -> (serde_json::Value, i32) {
+    let CueChange {
+        msec,
+        comment,
+        color,
+        out_msec,
+    } = change;
     let cue = match sqlx::query_as::<_, CueRow>(
         "SELECT ID as id, ContentID as content_id, InMsec as in_msec, \
          OutMsec as out_msec, Kind as kind, Color as color, ColorTableIndex as color_table_index, ActiveLoop as active_loop, BeatLoopSize as beat_loop_size, Comment as comment \
@@ -576,18 +597,21 @@ async fn handle_track_cue_update(
         Err(e) => return db_error(e),
     };
 
-    if msec.is_none() && comment.is_none() && color.is_none() {
+    if out_msec.is_some() && !cue.is_loop() {
+        return usage_error("--out-msec only moves the end of a loop; this cue is not a loop");
+    }
+    if msec.is_none() && comment.is_none() && color.is_none() && out_msec.is_none() {
         return (
             output::error(
                 "usage",
                 output::EXIT_USAGE,
                 "No fields specified to update",
-                Some("Use --msec, --comment or --color"),
+                Some("Use --msec, --comment, --color or --out-msec"),
             ),
             output::EXIT_USAGE,
         );
     }
-    if msec.is_some() {
+    if msec.is_some() || out_msec.is_some() {
         match check_position_format(pool, cue.content_id()).await {
             Ok(Some(refused)) => return refused,
             Ok(None) => {}
@@ -628,6 +652,9 @@ async fn handle_track_cue_update(
     if let Some(ref v) = color {
         changes.insert("color".into(), serde_json::json!(v));
     }
+    if let Some(v) = out_msec {
+        changes.insert("out_msec".into(), serde_json::json!(v));
+    }
 
     let plan = serde_json::json!({
         "action": "update_cue",
@@ -644,7 +671,15 @@ async fn handle_track_cue_update(
 
     let now = now_datetime();
     sqlx::query("BEGIN").execute(pool).await.ok();
-    let written = update_cue_row(pool, cue_id, msec, comment.as_deref(), color_change, &now).await;
+    let written = update_cue_row(
+        pool,
+        cue_id,
+        (msec, out_msec),
+        comment.as_deref(),
+        color_change,
+        &now,
+    )
+    .await;
     let written = match written {
         Ok(_) => content_cue::sync(pool, cue.content_id(), &[cue_id], &now).await,
         Err(e) => Err(e),
@@ -677,11 +712,19 @@ enum ColorChange {
 async fn update_cue_row(
     pool: &SqlitePool,
     cue_id: &str,
-    msec: Option<i64>,
+    (msec, out_msec): (Option<i64>, Option<i64>),
     comment: Option<&str>,
     color: Option<ColorChange>,
     now: &str,
 ) -> Result<(), sqlx::Error> {
+    if let Some(v) = out_msec {
+        sqlx::query("UPDATE djmdCue SET OutMsec = ?, OutFrame = ? WHERE ID = ?")
+            .bind(v)
+            .bind(msec_to_frame(v))
+            .bind(cue_id)
+            .execute(pool)
+            .await?;
+    }
     let color_sql = match color {
         Some(ColorChange::MemoryCue(v)) => Some(("UPDATE djmdCue SET Color = ? WHERE ID = ?", v)),
         Some(ColorChange::HotCue(v)) => {

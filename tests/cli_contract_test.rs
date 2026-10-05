@@ -2242,7 +2242,54 @@ async fn cues_list_reports_loops() {
 
 /// `cues update --out-msec` moves the end of a loop and recomputes OutFrame.
 #[tokio::test]
-async fn cues_update_out_msec_moves_the_loop_end() {}
+async fn cues_update_out_msec_moves_the_loop_end() {
+    let (db_path, _dir) = common::setup_db().await;
+    let assert = rbx_cmd(&db_path)
+        .args([
+            "tracks",
+            "cues",
+            "add",
+            "101",
+            "1000",
+            "--out-msec",
+            "4000",
+            "--execute",
+        ])
+        .assert()
+        .code(0);
+    let cue_id = stdout_json(&assert)["result"]["cue_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    rbx_cmd(&db_path)
+        .args([
+            "tracks",
+            "cues",
+            "update",
+            &cue_id,
+            "--out-msec",
+            "8000",
+            "--execute",
+        ])
+        .assert()
+        .code(0);
+
+    let pool = common::open_pool(&db_path).await;
+    let (out_msec, out_frame): (i64, i64) =
+        sqlx::query_as("SELECT OutMsec, OutFrame FROM djmdCue WHERE ID = ?")
+            .bind(&cue_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!((out_msec, out_frame), (8000, 1200));
+    let (cues,): (String,) = sqlx::query_as("SELECT Cues FROM contentCue WHERE ContentID = '101'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let entry = &serde_json::from_str::<serde_json::Value>(&cues).unwrap()[0];
+    assert_eq!(entry["OutMsec"], 8000);
+}
 
 /// An active memory loop (Kind 4) counts toward the 10 memory cues.
 #[tokio::test]
