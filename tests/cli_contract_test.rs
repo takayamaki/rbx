@@ -919,3 +919,50 @@ async fn bulk_update_reads_the_plan_from_stdin() {
         .unwrap();
     assert_eq!(comment, "from stdin");
 }
+
+// --- playlists tracks add / remove --position ---
+// Order: the everyday case (insert one track in the middle) first, then
+// dry-run, several tracks at once, the edge positions, and removing by
+// position (for a track that is in the playlist twice) last.
+
+/// `--position N` inserts the track as the N-th row (1-based) and moves every
+/// later row down by one. The new row has the full native column set.
+#[tokio::test]
+async fn playlist_tracks_add_at_position_inserts_and_shifts_later_rows() {}
+
+/// Without --execute nothing is written. The plan shows the position and how
+/// many existing rows would move down.
+#[tokio::test]
+async fn playlist_tracks_add_at_position_dry_run_writes_nothing() {}
+
+/// Several track IDs with `--position N` go in at N, N+1, ... in the order
+/// they were given.
+#[tokio::test]
+async fn playlist_tracks_add_several_tracks_at_position_keeps_their_order() {}
+
+/// `--position` one past the last row is the same as appending.
+#[tokio::test]
+async fn playlist_tracks_add_at_position_after_last_row_appends() {}
+
+/// `--position 0` or a position past the end + 1 is a usage error and
+/// nothing is written.
+#[tokio::test]
+async fn playlist_tracks_add_at_out_of_range_position_is_a_usage_error() {}
+
+/// `remove --position N` removes only the N-th row, even when the same track
+/// is in the playlist twice, and renumbers the rest.
+#[tokio::test]
+async fn playlist_tracks_remove_at_position_removes_only_that_row() {}
+
+/// Without --execute nothing is written. The plan names the track at that
+/// position so the caller can check it before applying.
+#[tokio::test]
+async fn playlist_tracks_remove_at_position_dry_run_names_the_track() {}
+
+/// A position with no row is a usage error and nothing is written.
+#[tokio::test]
+async fn playlist_tracks_remove_at_out_of_range_position_is_a_usage_error() {}
+
+/// Track IDs and `--position` together are ambiguous and rejected.
+#[tokio::test]
+async fn playlist_tracks_remove_with_track_ids_and_position_is_a_usage_error() {}
