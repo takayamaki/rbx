@@ -1055,11 +1055,43 @@ async fn playlist_tracks_add_at_position_dry_run_writes_nothing() {
 /// Several track IDs with `--position N` go in at N, N+1, ... in the order
 /// they were given.
 #[tokio::test]
-async fn playlist_tracks_add_several_tracks_at_position_keeps_their_order() {}
+async fn playlist_tracks_add_several_tracks_at_position_keeps_their_order() {
+    let (db_path, _dir) = common::setup_db().await;
+    let pool = common::open_pool(&db_path).await;
+    seed_playlist(&pool, &["101", "102", "103"]).await;
+    seed_tracks(&pool, &["104", "105"]).await;
+
+    rbx_cmd(&db_path)
+        .args(["playlists", "tracks", "add", "501", "105", "104"])
+        .args(["--position", "3", "--execute"])
+        .assert()
+        .code(0);
+
+    assert_eq!(
+        playlist_rows(&pool).await,
+        rows(&[(1, "101"), (2, "102"), (3, "105"), (4, "104"), (5, "103")])
+    );
+}
 
 /// `--position` one past the last row is the same as appending.
 #[tokio::test]
-async fn playlist_tracks_add_at_position_after_last_row_appends() {}
+async fn playlist_tracks_add_at_position_after_last_row_appends() {
+    let (db_path, _dir) = common::setup_db().await;
+    let pool = common::open_pool(&db_path).await;
+    seed_playlist(&pool, &["101", "102"]).await;
+    seed_tracks(&pool, &["103"]).await;
+
+    rbx_cmd(&db_path)
+        .args(["playlists", "tracks", "add", "501", "103"])
+        .args(["--position", "3", "--execute"])
+        .assert()
+        .code(0);
+
+    assert_eq!(
+        playlist_rows(&pool).await,
+        rows(&[(1, "101"), (2, "102"), (3, "103")])
+    );
+}
 
 /// `--position 0` or a position past the end + 1 is a usage error and
 /// nothing is written.
