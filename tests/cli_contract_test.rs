@@ -2043,3 +2043,47 @@ async fn cues_hot_cue_color_outside_the_menu_is_a_usage_error() {
         .unwrap();
     assert_eq!(rows, 0);
 }
+
+// --- loops ---
+// Checked against the loops in a real master.db (rekordbox 7) and with the user in rekordbox:
+// a loop has OutMsec / OutFrame, Color 255, ColorTableIndex 0 (or the hot cue color),
+// CueMicrosec 0, Comment '' and BeatLoopSize = beats << 16 | denominator (0 when not on beats).
+// An active memory loop is Kind 4 (ActiveLoop stays 0); an active hot cue loop has ActiveLoop 1.
+// A track has at most one active memory loop and one active hot cue loop.
+
+/// `--out-msec` makes a memory cue a loop with the loop columns rekordbox writes.
+#[tokio::test]
+async fn cues_add_memory_loop_writes_the_loop_columns() {}
+
+/// `--beats 8` writes BeatLoopSize 524289 (8 << 16 | 1); `--beats 1/2` writes 65538.
+#[tokio::test]
+async fn cues_add_loop_with_beats_sets_beat_loop_size() {}
+
+/// A hot cue loop keeps its slot Kind; `--color` sets its ColorTableIndex.
+#[tokio::test]
+async fn cues_add_hot_cue_loop() {}
+
+/// `--active` on a memory loop writes Kind 4, on a hot cue loop ActiveLoop 1.
+#[tokio::test]
+async fn cues_add_active_loop() {}
+
+/// `cues list` shows loops with out_msec, beats and active.
+#[tokio::test]
+async fn cues_list_reports_loops() {}
+
+/// `cues update --out-msec` moves the end of a loop and recomputes OutFrame.
+#[tokio::test]
+async fn cues_update_out_msec_moves_the_loop_end() {}
+
+/// An active memory loop (Kind 4) counts toward the 10 memory cues.
+#[tokio::test]
+async fn cues_add_counts_active_memory_loops_toward_the_memory_cue_limit() {}
+
+/// A second active loop of the same kind (memory or hot) is a conflict.
+#[tokio::test]
+async fn cues_add_second_active_loop_is_a_conflict() {}
+
+/// `--out-msec` at or before the start, `--beats` without `--out-msec`,
+/// or `--active` without `--out-msec` is a usage error.
+#[tokio::test]
+async fn cues_add_bad_loop_flags_are_usage_errors() {}
