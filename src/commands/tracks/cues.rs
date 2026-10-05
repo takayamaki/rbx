@@ -916,6 +916,24 @@ pub(crate) fn describe(action: &str) -> Option<serde_json::Value> {
                     "Memory cue: pink, red, orange, yellow, green, aqua, blue or purple. Hot cue: violet, purple, lavender, slateblue, blue, sky, aqua, teal, emerald, green, lime, olive, yellow, orange, red, deeppink, or 1-16 (position in rekordbox's hot cue color menu, left to right, top to bottom)",
                 ),
                 flag(
+                    "--out-msec",
+                    "integer",
+                    false,
+                    "Loop end in milliseconds. Makes the cue a loop",
+                ),
+                flag(
+                    "--beats",
+                    "string",
+                    false,
+                    "Loop length in beats, e.g. 8 or 1/2 (BeatLoopSize). Omit for a loop that is not on beats",
+                ),
+                flag(
+                    "--active",
+                    "bool",
+                    false,
+                    "Make the loop active. One active memory loop and one active hot cue loop per track. Active hot cue loops do not work on CDJs after export",
+                ),
+                flag(
                     "--execute",
                     "bool",
                     false,
@@ -927,6 +945,7 @@ pub(crate) fn describe(action: &str) -> Option<serde_json::Value> {
                 "rbx tracks cues add TRACK_ID 12345",
                 "rbx tracks cues add TRACK_ID 12345 --color green",
                 "rbx tracks cues add TRACK_ID 12345 --kind hot --slot 1 --color red --comment 'Drop' --execute",
+                "rbx tracks cues add TRACK_ID 104987 --out-msec 109160 --beats 8 --active",
             ],
         ),
         "cues update" => describe_command(
@@ -940,6 +959,12 @@ pub(crate) fn describe(action: &str) -> Option<serde_json::Value> {
                     "string",
                     false,
                     "Memory cue: pink, red, orange, yellow, green, aqua, blue, purple, or none. Hot cue: a hot cue color name, 1-16, or none",
+                ),
+                flag(
+                    "--out-msec",
+                    "integer",
+                    false,
+                    "New loop end in milliseconds (loops only)",
                 ),
                 flag(
                     "--execute",
@@ -981,10 +1006,12 @@ fn cue_schema() -> serde_json::Value {
         "properties": {
             "id": { "type": "string" },
             "track_id": { "type": "string" },
-            "kind": { "type": "string", "enum": ["memory", "hot", "other"] },
+            "kind": { "type": "string", "enum": ["memory", "hot", "other"], "description": "memory includes active memory loops (Kind 4)" },
             "slot": { "type": "integer", "description": "Hot cue slot 1-8 (A-H). Only on hot cues" },
             "in_msec": { "type": "integer|null", "description": "Cue position in milliseconds" },
             "out_msec": { "type": "integer|null", "description": "Loop end in milliseconds, null if not a loop" },
+            "beats": { "type": "string|null", "description": "Loop length in beats (\"8\", \"1/2\"), null if not on beats. Only on loops" },
+            "active": { "type": "boolean", "description": "Whether the loop is active. Only on loops" },
             "color": {
                 "type": "string|null",
                 "description": "Color name (memory cue: pink, red, orange, yellow, green, aqua, blue, purple; hot cue: violet, purple, lavender, slateblue, blue, sky, aqua, teal, emerald, green, lime, olive, yellow, orange, red, deeppink). null for no color",

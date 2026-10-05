@@ -139,8 +139,19 @@ rbx tracks cues update <cue_id> --msec 15000 --comment 'Verse'
                                        # update cue position/comment (dry-run)
 rbx tracks cues update <cue_id> --color none
                                        # clear a MEMORY cue's color (dry-run)
+rbx tracks cues add <track_id> 104987 --out-msec 109160 --beats 8 --active
+                                       # add an active 8-beat MEMORY loop (dry-run)
+rbx tracks cues add <track_id> 92000 --kind hot --slot 2 --out-msec 97750 --beats 16
+                                       # add a 16-beat HOT cue loop in slot 2 = B (dry-run)
+rbx tracks cues update <cue_id> --out-msec 100000
+                                       # move the end of a loop (dry-run)
 rbx tracks cues delete <cue_id>        # delete a cue (dry-run)
 ```
+
+Loops: `--beats` is the loop length in beats (`8`, `1/2`); leave it out for a loop that is not on beats.
+A track can have one active memory loop and one active hot cue loop.
+Active hot cue loops do not work on CDJs after export; use an active memory loop for that.
+
 
 Hot cue colors are the 16 colors of rekordbox's hot cue color menu (left to right, top to bottom).
 Pass a name or the position:
@@ -172,8 +183,7 @@ The memory cue pink is a light magenta (closer to hot cue violet), so hot cue 16
 Cues are written the way rekordbox writes them:
 the djmdCue row, the track's `contentCue` row (all its cues as JSON), and `djmdContent.CueUpdated`.
 Not supported yet:
-loops,
-and placing cues on mp3 / FLAC files (rekordbox also stores an offset inside the file for those).
+placing cues on mp3 / FLAC files (rekordbox also stores an offset inside the file for those).
 
 ### tracks mytags
 
