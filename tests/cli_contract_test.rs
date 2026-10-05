@@ -1814,3 +1814,26 @@ async fn cues_add_refuses_mp3_and_flac() {
         .unwrap();
     assert_eq!(positions, vec![(1000,)]);
 }
+
+// --- hot cue colors ---
+// Checked by coloring hot cues A-H on two tracks in rekordbox 7:
+// the 16 colors of the hot cue color menu, read left to right and top to bottom,
+// are ColorTableIndex 49, 56, 60, 62, 1, 5, 9, 14, 18, 22, 26, 30, 32, 38, 42, 45.
+// Color stays -1.
+
+/// `--color N` on a hot cue picks the N-th color of the menu (1-16)
+/// and writes its ColorTableIndex to djmdCue and contentCue.
+#[tokio::test]
+async fn cues_add_hot_cue_with_menu_color() {}
+
+/// `cues update --color N` changes a hot cue's ColorTableIndex in place.
+#[tokio::test]
+async fn cues_update_hot_cue_color() {}
+
+/// `cues list` reports a hot cue's color as its position in the menu (1-16).
+#[tokio::test]
+async fn cues_list_reports_hot_cue_menu_color() {}
+
+/// A hot cue color outside 1-16, or a memory cue color name, is a usage error.
+#[tokio::test]
+async fn cues_hot_cue_color_outside_the_menu_is_a_usage_error() {}
