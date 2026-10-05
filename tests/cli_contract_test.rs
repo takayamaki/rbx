@@ -1489,7 +1489,7 @@ async fn cues_add_hot_cue_slots_d_to_h_use_kind_5_to_9() {
 
 /// `--color pink|red|orange|yellow|green|aqua|blue|purple` sets Color 0-7 on a
 /// memory cue (checked by coloring cues in rekordbox 7). Without it, Color is -1.
-/// Hot cue colors use another palette that is not checked yet, so they are refused.
+/// Names that only exist in the hot cue menu (teal, ...) are refused on memory cues.
 #[tokio::test]
 async fn cues_add_memory_cue_with_color() {
     let (db_path, _dir) = common::setup_db().await;
@@ -1511,9 +1511,15 @@ async fn cues_add_memory_cue_with_color() {
     }
     rbx_cmd(&db_path)
         .args([
-            "tracks", "cues", "add", "101", "4000", "--kind", "hot", "--slot", "1",
+            "tracks",
+            "cues",
+            "add",
+            "101",
+            "4000",
+            "--color",
+            "teal",
+            "--execute",
         ])
-        .args(["--color", "red", "--execute"])
         .assert()
         .code(2);
 
@@ -1813,4 +1819,227 @@ async fn cues_add_refuses_mp3_and_flac() {
         .await
         .unwrap();
     assert_eq!(positions, vec![(1000,)]);
+}
+
+// --- hot cue colors ---
+// Checked by coloring hot cues A-H on two tracks in rekordbox 7:
+// the 16 colors of the hot cue color menu, read left to right and top to bottom,
+// are ColorTableIndex 49, 56, 60, 62, 1, 5, 9, 14, 18, 22, 26, 30, 32, 38, 42, 45.
+// Color stays -1.
+
+/// `--color N` on a hot cue picks the N-th color of the menu (1-16)
+/// and writes its ColorTableIndex to djmdCue and contentCue.
+#[tokio::test]
+async fn cues_add_hot_cue_with_menu_color() {
+    let (db_path, _dir) = common::setup_db().await;
+
+    for (slot, color) in [("1", "1"), ("2", "5"), ("3", "16")] {
+        rbx_cmd(&db_path)
+            .args(["tracks", "cues", "add", "101", "1000", "--kind", "hot"])
+            .args(["--slot", slot, "--color", color, "--execute"])
+            .assert()
+            .code(0);
+    }
+
+    let pool = common::open_pool(&db_path).await;
+    let colors: Vec<(i64, i64, i64)> = sqlx::query_as(
+        "SELECT Kind, Color, ColorTableIndex FROM djmdCue WHERE ContentID = '101' ORDER BY Kind",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(colors, vec![(1, -1, 49), (2, -1, 1), (3, -1, 45)]);
+
+    let (cues,): (String,) = sqlx::query_as("SELECT Cues FROM contentCue WHERE ContentID = '101'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let entries: serde_json::Value = serde_json::from_str(&cues).unwrap();
+    let indexes: Vec<i64> = entries
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["ColorTableIndex"].as_i64().unwrap())
+        .collect();
+    assert_eq!(indexes, vec![49, 1, 45]);
+}
+
+/// `cues update --color N` changes a hot cue's ColorTableIndex in place.
+#[tokio::test]
+async fn cues_update_hot_cue_color() {
+    let (db_path, _dir) = common::setup_db().await;
+    let assert = rbx_cmd(&db_path)
+        .args([
+            "tracks", "cues", "add", "101", "1000", "--kind", "hot", "--slot", "1",
+        ])
+        .arg("--execute")
+        .assert()
+        .code(0);
+    let cue_id = stdout_json(&assert)["result"]["cue_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    rbx_cmd(&db_path)
+        .args([
+            "tracks",
+            "cues",
+            "update",
+            &cue_id,
+            "--color",
+            "9",
+            "--execute",
+        ])
+        .assert()
+        .code(0);
+
+    let pool = common::open_pool(&db_path).await;
+    let (color, index): (i64, i64) =
+        sqlx::query_as("SELECT Color, ColorTableIndex FROM djmdCue WHERE ID = ?")
+            .bind(&cue_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!((color, index), (-1, 18));
+    let (cues,): (String,) = sqlx::query_as("SELECT Cues FROM contentCue WHERE ContentID = '101'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let entries: serde_json::Value = serde_json::from_str(&cues).unwrap();
+    assert_eq!(entries[0]["ColorTableIndex"], 18);
+}
+
+/// Each menu color also has a name, picked from the color seen in the menu
+/// and matching the memory cue names where the color is close (red, blue, ...).
+#[tokio::test]
+async fn cues_add_hot_cue_color_by_name() {
+    let (db_path, _dir) = common::setup_db().await;
+    for (slot, color) in [
+        ("1", "violet"),
+        ("2", "slateblue"),
+        ("3", "red"),
+        ("4", "deeppink"),
+    ] {
+        rbx_cmd(&db_path)
+            .args(["tracks", "cues", "add", "101", "1000", "--kind", "hot"])
+            .args(["--slot", slot, "--color", color, "--execute"])
+            .assert()
+            .code(0);
+    }
+
+    let pool = common::open_pool(&db_path).await;
+    let indexes: Vec<(i64,)> =
+        sqlx::query_as("SELECT ColorTableIndex FROM djmdCue WHERE ContentID = '101' ORDER BY Kind")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(indexes, vec![(49,), (62,), (42,), (45,)]);
+}
+
+/// `cues update --color none` on a hot cue writes ColorTableIndex 0,
+/// which is what the menu's reset (初期化) writes in rekordbox 7.
+#[tokio::test]
+async fn cues_update_hot_cue_color_none_resets_it() {
+    let (db_path, _dir) = common::setup_db().await;
+    let assert = rbx_cmd(&db_path)
+        .args([
+            "tracks", "cues", "add", "101", "1000", "--kind", "hot", "--slot", "1",
+        ])
+        .args(["--color", "red", "--execute"])
+        .assert()
+        .code(0);
+    let cue_id = stdout_json(&assert)["result"]["cue_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    rbx_cmd(&db_path)
+        .args([
+            "tracks",
+            "cues",
+            "update",
+            &cue_id,
+            "--color",
+            "none",
+            "--execute",
+        ])
+        .assert()
+        .code(0);
+
+    let pool = common::open_pool(&db_path).await;
+    let (color, index): (i64, i64) =
+        sqlx::query_as("SELECT Color, ColorTableIndex FROM djmdCue WHERE ID = ?")
+            .bind(&cue_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!((color, index), (-1, 0));
+
+    let assert = rbx_cmd(&db_path)
+        .args(["tracks", "cues", "list", "101"])
+        .assert()
+        .code(0);
+    assert_eq!(
+        stdout_json(&assert)["items"][0]["color"],
+        serde_json::Value::Null
+    );
+}
+
+/// `cues list` reports a hot cue's color by its name.
+#[tokio::test]
+async fn cues_list_reports_hot_cue_menu_color() {
+    let (db_path, _dir) = common::setup_db().await;
+    rbx_cmd(&db_path)
+        .args([
+            "tracks", "cues", "add", "101", "1000", "--kind", "hot", "--slot", "1",
+        ])
+        .args(["--color", "12", "--execute"])
+        .assert()
+        .code(0);
+    rbx_cmd(&db_path)
+        .args([
+            "tracks", "cues", "add", "101", "2000", "--kind", "hot", "--slot", "2",
+        ])
+        .arg("--execute")
+        .assert()
+        .code(0);
+
+    let assert = rbx_cmd(&db_path)
+        .args(["tracks", "cues", "list", "101"])
+        .assert()
+        .code(0);
+    let json = stdout_json(&assert);
+    let items = json["items"].as_array().unwrap();
+    let colored = items.iter().find(|c| c["slot"] == 1).unwrap();
+    assert_eq!(colored["color"], "olive");
+    let plain = items.iter().find(|c| c["slot"] == 2).unwrap();
+    assert_eq!(plain["color"], serde_json::Value::Null);
+}
+
+/// A hot cue color outside 1-16, or a name that is not in the menu, is a usage error.
+#[tokio::test]
+async fn cues_hot_cue_color_outside_the_menu_is_a_usage_error() {
+    let (db_path, _dir) = common::setup_db().await;
+    for color in ["0", "17", "beige", "none"] {
+        let assert = rbx_cmd(&db_path)
+            .args([
+                "tracks", "cues", "add", "101", "1000", "--kind", "hot", "--slot", "1",
+            ])
+            .args(["--color", color, "--execute"])
+            .assert()
+            .code(2);
+        assert_eq!(
+            stdout_json(&assert)["error"]["category"],
+            "usage",
+            "--color {}",
+            color
+        );
+    }
+
+    let pool = common::open_pool(&db_path).await;
+    let (rows,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM djmdCue")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(rows, 0);
 }

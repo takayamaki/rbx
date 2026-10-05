@@ -133,8 +133,8 @@ rbx tracks cues list <track_id>        # list MEMORY/HOT cues on a track
 rbx tracks cues add <track_id> 12345   # add MEMORY cue at 12345ms (dry-run)
 rbx tracks cues add <track_id> 12345 --color green
                                        # add a green MEMORY cue (dry-run)
-rbx tracks cues add <track_id> 92000 --kind hot --slot 1 --comment 'Drop'
-                                       # add HOT cue in slot 1 = A (slots 1-8 are A-H) (dry-run)
+rbx tracks cues add <track_id> 92000 --kind hot --slot 1 --color red --comment 'Drop'
+                                       # add a red HOT cue in slot 1 = A (slots 1-8 are A-H) (dry-run)
 rbx tracks cues update <cue_id> --msec 15000 --comment 'Verse'
                                        # update cue position/comment (dry-run)
 rbx tracks cues update <cue_id> --color none
@@ -142,10 +142,37 @@ rbx tracks cues update <cue_id> --color none
 rbx tracks cues delete <cue_id>        # delete a cue (dry-run)
 ```
 
+Hot cue colors are the 16 colors of rekordbox's hot cue color menu (left to right, top to bottom).
+Pass a name or the position:
+
+| # | Name | Seen in the menu | ColorTableIndex |
+|---|---|---|---|
+| 1 | violet | #DE44CF | 49 |
+| 2 | purple | #B432FF | 56 |
+| 3 | lavender | #AA72FF | 60 |
+| 4 | slateblue | #6473FF | 62 |
+| 5 | blue | #305AFF | 1 |
+| 6 | sky | #50B4FF | 5 |
+| 7 | aqua | #00E0FF | 9 |
+| 8 | teal | #1FA392 | 14 |
+| 9 | emerald | #10B176 | 18 |
+| 10 | green | #28E214 | 22 |
+| 11 | lime | #A5E116 | 26 |
+| 12 | olive | #B4BE04 | 30 |
+| 13 | yellow | #C3AF04 | 32 |
+| 14 | orange | #E0641B | 38 |
+| 15 | red | #E62828 | 42 |
+| 16 | deeppink | #FF127B | 45 |
+
+Memory cue colors are pink, red, orange, yellow, green, aqua, blue and purple (Color 0-7),
+the names in rekordbox's English menu.
+Hot cue colors close to a memory cue color share its name.
+The memory cue pink is a light magenta (closer to hot cue violet), so hot cue 16 is deeppink.
+
 Cues are written the way rekordbox writes them:
 the djmdCue row, the track's `contentCue` row (all its cues as JSON), and `djmdContent.CueUpdated`.
 Not supported yet:
-hot cue colors, loops,
+loops,
 and placing cues on mp3 / FLAC files (rekordbox also stores an offset inside the file for those).
 
 ### tracks mytags

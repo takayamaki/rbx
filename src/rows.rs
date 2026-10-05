@@ -1,4 +1,6 @@
-use crate::commands::tracks::cues::{kind_to_slot, MEMORY_COLORS};
+use crate::commands::tracks::cues::{
+    kind_to_slot, HOT_CUE_COLORS, HOT_CUE_COLOR_NAMES, MEMORY_COLORS,
+};
 use sqlx::FromRow;
 
 #[derive(Debug, FromRow)]
@@ -145,6 +147,7 @@ pub(crate) struct CueRow {
     out_msec: Option<i64>,
     kind: Option<i32>,
     color: Option<i32>,
+    color_table_index: Option<i32>,
     comment: Option<String>,
 }
 
@@ -163,10 +166,17 @@ impl CueRow {
             Some(k @ (1..=3 | 5..=9)) => ("hot", Some(kind_to_slot(k))),
             _ => ("other", None),
         };
-        // Only memory cue colors (Color 0-7) are known; -1 and 255 mean no color
-        let color = match (kind, self.color) {
-            ("memory", Some(c @ 0..=7)) => Some(MEMORY_COLORS[c as usize]),
-            _ => None,
+        // Memory cues: Color 0-7 as a name (-1 and 255 mean no color).
+        // Hot cues: ColorTableIndex as the name of its color in the menu.
+        let color = match (kind, self.color, self.color_table_index) {
+            ("memory", Some(c @ 0..=7), _) => serde_json::json!(MEMORY_COLORS[c as usize]),
+            ("hot", _, Some(index)) => HOT_CUE_COLORS
+                .iter()
+                .position(|&v| v == index)
+                .map_or(serde_json::Value::Null, |i| {
+                    serde_json::json!(HOT_CUE_COLOR_NAMES[i])
+                }),
+            _ => serde_json::Value::Null,
         };
         let mut json = serde_json::json!({
             "id": self.id,

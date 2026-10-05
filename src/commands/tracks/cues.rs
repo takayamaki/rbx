@@ -49,14 +49,56 @@ async fn check_position_format(
 const MAX_MEMORY_CUES: i64 = 10;
 /// Color of a cue that never had one.
 const NO_COLOR: i32 = -1;
-/// Color rekordbox writes when the user clears a cue's color.
+/// Color rekordbox writes when the user clears a memory cue's color.
 const CLEARED_COLOR: i32 = 255;
+/// ColorTableIndex rekordbox writes when the user resets a hot cue's color.
+const RESET_HOT_CUE_COLOR: i32 = 0;
 pub(crate) const MEMORY_COLORS: [&str; 8] = [
     "pink", "red", "orange", "yellow", "green", "aqua", "blue", "purple",
 ];
 const COLOR_HINT: &str = "use pink, red, orange, yellow, green, aqua, blue or purple";
 
-/// Memory cue colors are Color 0-7 in rekordbox's menu order.
+/// ColorTableIndex of the 16 colors in rekordbox's hot cue color menu,
+/// left to right and top to bottom.
+pub(crate) const HOT_CUE_COLORS: [i32; 16] =
+    [49, 56, 60, 62, 1, 5, 9, 14, 18, 22, 26, 30, 32, 38, 42, 45];
+/// Names for HOT_CUE_COLORS, picked from the colors seen in the menu
+/// and the closest CSS color names.
+/// Colors close to a memory cue color share its name (red, blue, ...).
+/// The last one is deeppink, not pink: the memory cue "pink" is a light magenta, closer to violet.
+pub(crate) const HOT_CUE_COLOR_NAMES: [&str; 16] = [
+    "violet",
+    "purple",
+    "lavender",
+    "slateblue",
+    "blue",
+    "sky",
+    "aqua",
+    "teal",
+    "emerald",
+    "green",
+    "lime",
+    "olive",
+    "yellow",
+    "orange",
+    "red",
+    "deeppink",
+];
+const HOT_COLOR_HINT: &str = "use violet, purple, lavender, slateblue, blue, sky, aqua, teal, \
+     emerald, green, lime, olive, yellow, orange, red, deeppink, \
+     or 1-16 for the position in rekordbox's hot cue color menu";
+
+/// Hot cue colors are given by name, or by their position (1-16) in rekordbox's color menu.
+fn hot_cue_color(name: &str) -> Option<i32> {
+    let position = match HOT_CUE_COLOR_NAMES.iter().position(|c| *c == name) {
+        Some(i) => i,
+        None => name.parse::<usize>().ok()?.checked_sub(1)?,
+    };
+    HOT_CUE_COLORS.get(position).copied()
+}
+
+/// Memory cue colors are Color 0-7 in rekordbox's menu order,
+/// named as in rekordbox's English menu.
 fn memory_color(name: &str) -> Option<i32> {
     MEMORY_COLORS
         .iter()
@@ -113,7 +155,7 @@ pub(crate) async fn handle_track_cues(
             }
             match sqlx::query_as::<_, CueRow>(
                 "SELECT ID as id, ContentID as content_id, InMsec as in_msec, \
-                 OutMsec as out_msec, Kind as kind, Color as color, Comment as comment \
+                 OutMsec as out_msec, Kind as kind, Color as color, ColorTableIndex as color_table_index, Comment as comment \
                  FROM djmdCue WHERE ContentID = ? AND rb_local_deleted = 0 \
                  ORDER BY Kind, InMsec",
             )
@@ -185,13 +227,20 @@ async fn handle_track_cue_add(
         color,
     } = cue;
     let (kind, color) = (kind.as_str(), color.as_deref());
-    let color_value = match color {
-        None => NO_COLOR,
-        Some(_) if kind != "memory" => {
-            return usage_error("--color is only supported on memory cues for now")
-        }
+    // Memory cues keep their color in Color, hot cues in ColorTableIndex
+    let (color_value, color_table_index) = match color {
+        None => (NO_COLOR, None),
+        Some(name) if kind != "memory" => match hot_cue_color(name) {
+            Some(v) => (NO_COLOR, Some(v)),
+            None => {
+                return usage_error(&format!(
+                    "Unknown hot cue color: {} ({})",
+                    name, HOT_COLOR_HINT
+                ))
+            }
+        },
         Some(name) => match memory_color(name) {
-            Some(v) => v,
+            Some(v) => (v, None),
             None => return usage_error(&format!("Unknown color: {} ({})", name, COLOR_HINT)),
         },
     };
@@ -355,10 +404,10 @@ async fn handle_track_cue_add(
          ActiveLoop, Comment, BeatLoopSize, CueMicrosec, \
          ContentUUID, UUID, rb_data_status, rb_local_data_status, rb_local_deleted, rb_local_synced, \
          created_at, updated_at) \
-         VALUES (?, ?, ?, ?, 0, 0, -1, 0, 0, 0, ?, ?, NULL, NULL, ?, NULL, NULL, ?, ?, 0, 0, 0, 0, ?, ?)"
+         VALUES (?, ?, ?, ?, 0, 0, -1, 0, 0, 0, ?, ?, ?, NULL, ?, NULL, NULL, ?, ?, 0, 0, 0, 0, ?, ?)"
     )
     .bind(&new_id).bind(track_id).bind(msec).bind(msec_to_frame(msec))
-    .bind(kind_int).bind(color_value).bind(comment.as_deref().filter(|c| !c.is_empty()))
+    .bind(kind_int).bind(color_value).bind(color_table_index).bind(comment.as_deref().filter(|c| !c.is_empty()))
     .bind(&content_uuid).bind(&new_uuid)
     .bind(&now).bind(&now)
     .execute(pool).await;
@@ -401,7 +450,7 @@ async fn handle_track_cue_update(
 ) -> (serde_json::Value, i32) {
     let cue = match sqlx::query_as::<_, CueRow>(
         "SELECT ID as id, ContentID as content_id, InMsec as in_msec, \
-         OutMsec as out_msec, Kind as kind, Color as color, Comment as comment \
+         OutMsec as out_msec, Kind as kind, Color as color, ColorTableIndex as color_table_index, Comment as comment \
          FROM djmdCue WHERE ID = ? AND rb_local_deleted = 0",
     )
     .bind(cue_id)
@@ -441,14 +490,21 @@ async fn handle_track_cue_update(
             Err(e) => return db_error(e),
         }
     }
-    let color_value = match color.as_deref() {
+    let color_change = match color.as_deref() {
         None => None,
-        Some(_) if !cue.is_memory() => {
-            return usage_error("--color is only supported on memory cues for now")
-        }
-        Some("none") => Some(CLEARED_COLOR),
+        Some("none") if !cue.is_memory() => Some(ColorChange::HotCue(RESET_HOT_CUE_COLOR)),
+        Some(name) if !cue.is_memory() => match hot_cue_color(name) {
+            Some(v) => Some(ColorChange::HotCue(v)),
+            None => {
+                return usage_error(&format!(
+                    "Unknown hot cue color: {} ({})",
+                    name, HOT_COLOR_HINT
+                ))
+            }
+        },
+        Some("none") => Some(ColorChange::MemoryCue(CLEARED_COLOR)),
         Some(name) => match memory_color(name) {
-            Some(v) => Some(v),
+            Some(v) => Some(ColorChange::MemoryCue(v)),
             None => {
                 return usage_error(&format!(
                     "Unknown color: {} ({}, or none)",
@@ -484,7 +540,7 @@ async fn handle_track_cue_update(
 
     let now = now_datetime();
     sqlx::query("BEGIN").execute(pool).await.ok();
-    let written = update_cue_row(pool, cue_id, msec, comment.as_deref(), color_value, &now).await;
+    let written = update_cue_row(pool, cue_id, msec, comment.as_deref(), color_change, &now).await;
     let written = match written {
         Ok(_) => content_cue::sync(pool, cue.content_id(), &[cue_id], &now).await,
         Err(e) => Err(e),
@@ -507,21 +563,30 @@ async fn handle_track_cue_update(
     )
 }
 
+/// A new color: memory cues keep it in Color, hot cues in ColorTableIndex.
+enum ColorChange {
+    MemoryCue(i32),
+    HotCue(i32),
+}
+
 /// Changes the cue row in place, as rekordbox does (same ID).
 async fn update_cue_row(
     pool: &SqlitePool,
     cue_id: &str,
     msec: Option<i64>,
     comment: Option<&str>,
-    color: Option<i32>,
+    color: Option<ColorChange>,
     now: &str,
 ) -> Result<(), sqlx::Error> {
-    if let Some(v) = color {
-        sqlx::query("UPDATE djmdCue SET Color = ? WHERE ID = ?")
-            .bind(v)
-            .bind(cue_id)
-            .execute(pool)
-            .await?;
+    let color_sql = match color {
+        Some(ColorChange::MemoryCue(v)) => Some(("UPDATE djmdCue SET Color = ? WHERE ID = ?", v)),
+        Some(ColorChange::HotCue(v)) => {
+            Some(("UPDATE djmdCue SET ColorTableIndex = ? WHERE ID = ?", v))
+        }
+        None => None,
+    };
+    if let Some((sql, v)) = color_sql {
+        sqlx::query(sql).bind(v).bind(cue_id).execute(pool).await?;
     }
     if let Some(v) = msec {
         sqlx::query("UPDATE djmdCue SET InMsec = ?, InFrame = ? WHERE ID = ?")
@@ -553,7 +618,7 @@ async fn handle_track_cue_delete(
 ) -> (serde_json::Value, i32) {
     let cue = match sqlx::query_as::<_, CueRow>(
         "SELECT ID as id, ContentID as content_id, InMsec as in_msec, \
-         OutMsec as out_msec, Kind as kind, Color as color, Comment as comment \
+         OutMsec as out_msec, Kind as kind, Color as color, ColorTableIndex as color_table_index, Comment as comment \
          FROM djmdCue WHERE ID = ? AND rb_local_deleted = 0",
     )
     .bind(cue_id)
@@ -654,7 +719,7 @@ pub(crate) fn describe(action: &str) -> Option<serde_json::Value> {
                     "--color",
                     "string",
                     false,
-                    "Memory cue color: pink, red, orange, yellow, green, aqua, blue or purple. Not supported on hot cues yet",
+                    "Memory cue: pink, red, orange, yellow, green, aqua, blue or purple. Hot cue: violet, purple, lavender, slateblue, blue, sky, aqua, teal, emerald, green, lime, olive, yellow, orange, red, deeppink, or 1-16 (position in rekordbox's hot cue color menu, left to right, top to bottom)",
                 ),
                 flag(
                     "--execute",
@@ -667,7 +732,7 @@ pub(crate) fn describe(action: &str) -> Option<serde_json::Value> {
             &[
                 "rbx tracks cues add TRACK_ID 12345",
                 "rbx tracks cues add TRACK_ID 12345 --color green",
-                "rbx tracks cues add TRACK_ID 12345 --kind hot --slot 1 --comment 'Drop' --execute",
+                "rbx tracks cues add TRACK_ID 12345 --kind hot --slot 1 --color red --comment 'Drop' --execute",
             ],
         ),
         "cues update" => describe_command(
@@ -680,7 +745,7 @@ pub(crate) fn describe(action: &str) -> Option<serde_json::Value> {
                     "--color",
                     "string",
                     false,
-                    "Memory cue color: pink, red, orange, yellow, green, aqua, blue, purple, or none",
+                    "Memory cue: pink, red, orange, yellow, green, aqua, blue, purple, or none. Hot cue: a hot cue color name, 1-16, or none",
                 ),
                 flag(
                     "--execute",
@@ -728,8 +793,7 @@ fn cue_schema() -> serde_json::Value {
             "out_msec": { "type": "integer|null", "description": "Loop end in milliseconds, null if not a loop" },
             "color": {
                 "type": "string|null",
-                "enum": ["pink", "red", "orange", "yellow", "green", "aqua", "blue", "purple", null],
-                "description": "Memory cue color. null for no color and for hot cues (their palette is not supported yet)",
+                "description": "Color name (memory cue: pink, red, orange, yellow, green, aqua, blue, purple; hot cue: violet, purple, lavender, slateblue, blue, sky, aqua, teal, emerald, green, lime, olive, yellow, orange, red, deeppink). null for no color",
             },
             "comment": { "type": "string|null" },
         },
