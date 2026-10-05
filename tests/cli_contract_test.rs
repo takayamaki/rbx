@@ -1201,3 +1201,75 @@ async fn playlist_tracks_remove_with_track_ids_and_position_is_a_usage_error() {
 
     assert_eq!(playlist_rows(&pool).await.len(), 3);
 }
+
+// --- tracks cues add / update / delete ---
+// What rekordbox itself writes was checked against a real master.db (rekordbox 7):
+// InFrame is 1/150 s, unused columns are NULL, hot cues D-H are Kind 5-9,
+// every track with cues has one contentCue row holding all its cues as JSON,
+// and djmdContent.CueUpdated goes up on every cue change.
+// Order: the everyday case (add a memory cue) first, then the side tables,
+// hot cues, colors, list, update, delete, and the cases that are refused last.
+
+/// A memory cue gets InFrame = floor(msec * 150 / 1000), OutMsec -1, and NULL
+/// in the columns rekordbox leaves empty (CueMicrosec, ActiveLoop, BeatLoopSize,
+/// ColorTableIndex, Comment). The cue row itself has no USN, like rekordbox's.
+#[tokio::test]
+async fn cues_add_memory_cue_writes_frame_and_leaves_unused_columns_null() {}
+
+/// The first cue on a track creates its contentCue row: ID is the track UUID,
+/// Cues is a JSON array with the cue (NULL fields left out, ISO timestamps)
+/// and rb_cue_count is 1.
+#[tokio::test]
+async fn cues_add_creates_the_content_cue_row() {}
+
+/// A cue on a track that already has cues is appended to its contentCue JSON.
+/// The entries rekordbox wrote are kept byte for byte.
+#[tokio::test]
+async fn cues_add_appends_to_content_cue_and_keeps_other_entries_as_they_are() {}
+
+/// Adding a cue bumps djmdContent.CueUpdated by one and gives contentCue and
+/// djmdContent new USNs, in that order, within the agentRegistry counter.
+#[tokio::test]
+async fn cues_add_bumps_cue_updated_and_usns() {}
+
+/// Hot cue slots A-C are Kind 1-3 and D-H are Kind 5-9 (Kind 4 is not a slot).
+#[tokio::test]
+async fn cues_add_hot_cue_slots_d_to_h_use_kind_5_to_9() {}
+
+/// `--color pink|red|orange|yellow|green|aqua|blue|purple` sets Color 0-7 on a
+/// memory cue. Without it, Color is -1 (no color).
+#[tokio::test]
+async fn cues_add_memory_cue_with_color() {}
+
+/// `cues list` turns Kind back into the hot cue slot and Color into its name.
+#[tokio::test]
+async fn cues_list_reports_slot_and_color_name() {}
+
+/// `cues update --msec` moves the cue, recomputes InFrame, and updates the
+/// cue's entry in contentCue, CueUpdated and the USNs.
+#[tokio::test]
+async fn cues_update_msec_recomputes_frame_and_syncs_content_cue() {}
+
+/// `cues update --color` changes the color of the same row (same ID).
+/// `--color none` writes 255, as rekordbox does when a color is cleared.
+#[tokio::test]
+async fn cues_update_color_changes_the_row_in_place() {}
+
+/// `cues delete` removes the row (rekordbox keeps no soft-deleted cues) and
+/// its entry in contentCue.
+#[tokio::test]
+async fn cues_delete_removes_the_row_and_its_content_cue_entry() {}
+
+/// Deleting the last cue of a track removes its contentCue row
+/// (rekordbox has no contentCue rows with zero cues).
+#[tokio::test]
+async fn cues_delete_last_cue_removes_the_content_cue_row() {}
+
+/// rekordbox allows at most 10 memory cues per track. An 11th is a conflict.
+#[tokio::test]
+async fn cues_add_eleventh_memory_cue_is_a_conflict() {}
+
+/// mp3 (VBR needs MPEG frame offsets) and FLAC (needs seek info) are refused,
+/// because rbx cannot compute those fields yet.
+#[tokio::test]
+async fn cues_add_refuses_mp3_and_flac() {}
