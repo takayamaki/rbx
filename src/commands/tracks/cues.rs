@@ -14,6 +14,8 @@ fn msec_to_frame(msec: i64) -> i64 {
     msec * 150 / 1000
 }
 
+/// rekordbox allows at most this many memory cues on one track.
+const MAX_MEMORY_CUES: i64 = 10;
 /// Color of a cue that never had one.
 const NO_COLOR: i32 = -1;
 /// Color rekordbox writes when the user clears a cue's color.
@@ -244,6 +246,36 @@ async fn handle_track_cue_add(
                 ),
                 output::EXIT_CONFLICT,
             );
+        }
+    }
+
+    if kind_int == 0 {
+        let count = sqlx::query_as::<_, (i64,)>(
+            "SELECT COUNT(*) FROM djmdCue WHERE ContentID = ? AND Kind = 0 AND rb_local_deleted = 0",
+        )
+        .bind(track_id)
+        .fetch_one(pool)
+        .await;
+        match count {
+            Ok((n,)) if n >= MAX_MEMORY_CUES => {
+                return (
+                    output::error(
+                        "conflict",
+                        output::EXIT_CONFLICT,
+                        &format!(
+                            "'{}' already has {} memory cues, the most rekordbox allows",
+                            title, n
+                        ),
+                        Some(&format!(
+                            "Use 'rbx tracks cues list {}' and delete one first",
+                            track_id
+                        )),
+                    ),
+                    output::EXIT_CONFLICT,
+                )
+            }
+            Ok(_) => {}
+            Err(e) => return db_error(e),
         }
     }
 

@@ -1728,7 +1728,35 @@ async fn cues_delete_last_cue_removes_the_content_cue_row() {
 
 /// rekordbox allows at most 10 memory cues per track. An 11th is a conflict.
 #[tokio::test]
-async fn cues_add_eleventh_memory_cue_is_a_conflict() {}
+async fn cues_add_eleventh_memory_cue_is_a_conflict() {
+    let (db_path, _dir) = common::setup_db().await;
+    for i in 1..=10 {
+        rbx_cmd(&db_path)
+            .args([
+                "tracks",
+                "cues",
+                "add",
+                "101",
+                &(i * 1000).to_string(),
+                "--execute",
+            ])
+            .assert()
+            .code(0);
+    }
+
+    let assert = rbx_cmd(&db_path)
+        .args(["tracks", "cues", "add", "101", "11000", "--execute"])
+        .assert()
+        .code(5);
+    assert_eq!(stdout_json(&assert)["error"]["category"], "conflict");
+
+    let pool = common::open_pool(&db_path).await;
+    let (rows,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM djmdCue WHERE ContentID = '101'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(rows, 10);
+}
 
 /// mp3 (VBR needs MPEG frame offsets) and FLAC (needs seek info) are refused,
 /// because rbx cannot compute those fields yet.
