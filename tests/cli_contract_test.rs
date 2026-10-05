@@ -1626,7 +1626,39 @@ async fn cues_update_msec_recomputes_frame_and_syncs_content_cue() {
 /// `cues update --color` changes the color of the same row (same ID).
 /// `--color none` writes 255, as rekordbox does when a color is cleared.
 #[tokio::test]
-async fn cues_update_color_changes_the_row_in_place() {}
+async fn cues_update_color_changes_the_row_in_place() {
+    let (db_path, _dir) = common::setup_db().await;
+    let pool = common::open_pool(&db_path).await;
+    seed_rekordbox_cue(&pool).await;
+
+    for (color, expected) in [("blue", 6), ("none", 255)] {
+        rbx_cmd(&db_path)
+            .args([
+                "tracks",
+                "cues",
+                "update",
+                "900",
+                "--color",
+                color,
+                "--execute",
+            ])
+            .assert()
+            .code(0);
+        let (value,): (i64,) = sqlx::query_as("SELECT Color FROM djmdCue WHERE ID = '900'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(value, expected, "--color {}", color);
+    }
+
+    let (cues,): (String,) = sqlx::query_as("SELECT Cues FROM contentCue WHERE ContentID = '102'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let entries: serde_json::Value = serde_json::from_str(&cues).unwrap();
+    assert_eq!(entries[0]["ID"], "900");
+    assert_eq!(entries[0]["Color"], 255);
+}
 
 /// `cues delete` removes the row (rekordbox keeps no soft-deleted cues) and
 /// its entry in contentCue.

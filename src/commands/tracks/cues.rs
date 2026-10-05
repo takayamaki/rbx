@@ -16,6 +16,8 @@ fn msec_to_frame(msec: i64) -> i64 {
 
 /// Color of a cue that never had one.
 const NO_COLOR: i32 = -1;
+/// Color rekordbox writes when the user clears a cue's color.
+const CLEARED_COLOR: i32 = 255;
 pub(crate) const MEMORY_COLORS: [&str; 8] = [
     "pink", "red", "orange", "yellow", "green", "aqua", "blue", "purple",
 ];
@@ -118,8 +120,9 @@ pub(crate) async fn handle_track_cues(
             cue_id,
             msec,
             comment,
+            color,
             execute,
-        } => handle_track_cue_update(pool, &cue_id, msec, comment, execute).await,
+        } => handle_track_cue_update(pool, &cue_id, msec, comment, color, execute).await,
         TrackCuesAction::Delete { cue_id, execute } => {
             handle_track_cue_delete(pool, &cue_id, execute).await
         }
@@ -324,6 +327,7 @@ async fn handle_track_cue_update(
     cue_id: &str,
     msec: Option<i64>,
     comment: Option<String>,
+    color: Option<String>,
     execute: bool,
 ) -> (serde_json::Value, i32) {
     let cue = match sqlx::query_as::<_, CueRow>(
@@ -350,17 +354,33 @@ async fn handle_track_cue_update(
         Err(e) => return db_error(e),
     };
 
-    if msec.is_none() && comment.is_none() {
+    if msec.is_none() && comment.is_none() && color.is_none() {
         return (
             output::error(
                 "usage",
                 output::EXIT_USAGE,
                 "No fields specified to update",
-                Some("Use --msec or --comment"),
+                Some("Use --msec, --comment or --color"),
             ),
             output::EXIT_USAGE,
         );
     }
+    let color_value = match color.as_deref() {
+        None => None,
+        Some(_) if !cue.is_memory() => {
+            return usage_error("--color is only supported on memory cues for now")
+        }
+        Some("none") => Some(CLEARED_COLOR),
+        Some(name) => match memory_color(name) {
+            Some(v) => Some(v),
+            None => {
+                return usage_error(&format!(
+                    "Unknown color: {} ({}, or none)",
+                    name, COLOR_HINT
+                ))
+            }
+        },
+    };
 
     let mut changes = serde_json::Map::new();
     if let Some(v) = msec {
@@ -368,6 +388,9 @@ async fn handle_track_cue_update(
     }
     if let Some(ref v) = comment {
         changes.insert("comment".into(), serde_json::json!(v));
+    }
+    if let Some(ref v) = color {
+        changes.insert("color".into(), serde_json::json!(v));
     }
 
     let plan = serde_json::json!({
@@ -385,7 +408,7 @@ async fn handle_track_cue_update(
 
     let now = now_datetime();
     sqlx::query("BEGIN").execute(pool).await.ok();
-    let written = update_cue_row(pool, cue_id, msec, comment.as_deref(), &now).await;
+    let written = update_cue_row(pool, cue_id, msec, comment.as_deref(), color_value, &now).await;
     let written = match written {
         Ok(_) => content_cue::sync(pool, cue.content_id(), &[cue_id], &now).await,
         Err(e) => Err(e),
@@ -414,8 +437,16 @@ async fn update_cue_row(
     cue_id: &str,
     msec: Option<i64>,
     comment: Option<&str>,
+    color: Option<i32>,
     now: &str,
 ) -> Result<(), sqlx::Error> {
+    if let Some(v) = color {
+        sqlx::query("UPDATE djmdCue SET Color = ? WHERE ID = ?")
+            .bind(v)
+            .bind(cue_id)
+            .execute(pool)
+            .await?;
+    }
     if let Some(v) = msec {
         sqlx::query("UPDATE djmdCue SET InMsec = ?, InFrame = ? WHERE ID = ?")
             .bind(v)

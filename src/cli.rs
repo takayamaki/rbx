@@ -177,6 +177,9 @@ pub(crate) enum TrackCuesAction {
         /// Cue comment/name
         #[arg(long)]
         comment: Option<String>,
+        /// Memory cue color: pink, red, orange, yellow, green, aqua, blue, purple, or none
+        #[arg(long)]
+        color: Option<String>,
         /// Actually apply the change
         #[arg(long)]
         execute: bool,

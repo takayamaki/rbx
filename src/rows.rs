@@ -153,6 +153,10 @@ impl CueRow {
         &self.content_id
     }
 
+    pub(crate) fn is_memory(&self) -> bool {
+        self.kind == Some(0)
+    }
+
     pub(crate) fn to_json(&self) -> serde_json::Value {
         let (kind, slot) = match self.kind {
             Some(0) => ("memory", None),
