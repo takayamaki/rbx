@@ -1223,6 +1223,41 @@ type CueNullColumns = (
 /// ID, UUID, Cues, rb_cue_count, created_at, rb_* status fields
 type ContentCueRow = (String, String, String, i64, String, i64, i64, i64, i64);
 
+/// A memory cue on track 102 as rekordbox wrote it: an older field order
+/// (ContentUUID near the end) and CueMicrosec 0.
+const REKORDBOX_CUE_ENTRY: &str = r#"{"ID":"900","ContentID":"102","InMsec":1000,"InFrame":150,"InMpegFrame":0,"InMpegAbs":0,"OutMsec":-1,"OutFrame":0,"OutMpegFrame":0,"OutMpegAbs":0,"Kind":0,"Color":-1,"ColorTableIndex":0,"ActiveLoop":0,"BeatLoopSize":0,"CueMicrosec":0,"ContentUUID":"c0000000-0000-0000-0000-000000000102","UUID":"q0000000-0000-0000-0000-000000000900","created_at":"2026-01-01T00:00:00.000+00:00","updated_at":"2026-01-01T00:00:00.000+00:00"}"#;
+
+/// Seeds REKORDBOX_CUE_ENTRY as a djmdCue row and a contentCue row.
+async fn seed_rekordbox_cue(pool: &sqlx::SqlitePool) {
+    sqlx::query(
+        "INSERT INTO djmdCue (ID, ContentID, InMsec, InFrame, InMpegFrame, InMpegAbs, \
+         OutMsec, OutFrame, OutMpegFrame, OutMpegAbs, Kind, Color, ColorTableIndex, \
+         ActiveLoop, BeatLoopSize, CueMicrosec, ContentUUID, UUID, created_at, updated_at) \
+         VALUES ('900', '102', 1000, 150, 0, 0, -1, 0, 0, 0, 0, -1, 0, 0, 0, 0, \
+         'c0000000-0000-0000-0000-000000000102', 'q0000000-0000-0000-0000-000000000900', ?, ?)",
+    )
+    .bind(common::SEED_TS)
+    .bind(common::SEED_TS)
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO contentCue (ID, ContentID, Cues, rb_cue_count, UUID, rb_local_usn, created_at, updated_at) \
+         VALUES ('c0000000-0000-0000-0000-000000000102', '102', ?, 1, \
+         'r0000000-0000-0000-0000-000000000102', 10, ?, ?)",
+    )
+    .bind(format!("[{}]", REKORDBOX_CUE_ENTRY))
+    .bind(common::SEED_TS)
+    .bind(common::SEED_TS)
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query("UPDATE djmdContent SET CueUpdated = '3' WHERE ID = '102'")
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
 /// A memory cue gets InFrame = floor(msec * 150 / 1000), OutMsec -1, and NULL
 /// in the columns rekordbox leaves empty (CueMicrosec, ActiveLoop, BeatLoopSize,
 /// ColorTableIndex, Comment). The cue row itself has no USN, like rekordbox's.
@@ -1359,7 +1394,30 @@ async fn cues_add_creates_the_content_cue_row() {
 /// A cue on a track that already has cues is appended to its contentCue JSON.
 /// The entries rekordbox wrote are kept byte for byte.
 #[tokio::test]
-async fn cues_add_appends_to_content_cue_and_keeps_other_entries_as_they_are() {}
+async fn cues_add_appends_to_content_cue_and_keeps_other_entries_as_they_are() {
+    let (db_path, _dir) = common::setup_db().await;
+    let pool = common::open_pool(&db_path).await;
+    seed_rekordbox_cue(&pool).await;
+
+    rbx_cmd(&db_path)
+        .args(["tracks", "cues", "add", "102", "30000", "--execute"])
+        .assert()
+        .code(0);
+
+    let (cues, count): (String, i64) =
+        sqlx::query_as("SELECT Cues, rb_cue_count FROM contentCue WHERE ContentID = '102'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(count, 2);
+    assert!(
+        cues.starts_with(&format!("[{},", REKORDBOX_CUE_ENTRY)),
+        "first entry changed: {}",
+        cues
+    );
+    let entries: serde_json::Value = serde_json::from_str(&cues).unwrap();
+    assert_eq!(entries[1]["InMsec"], 30000);
+}
 
 /// Adding a cue bumps djmdContent.CueUpdated by one and gives contentCue and
 /// djmdContent new USNs, in that order, within the agentRegistry counter.
