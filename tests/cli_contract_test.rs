@@ -1860,7 +1860,48 @@ async fn cues_add_hot_cue_with_menu_color() {
 
 /// `cues update --color N` changes a hot cue's ColorTableIndex in place.
 #[tokio::test]
-async fn cues_update_hot_cue_color() {}
+async fn cues_update_hot_cue_color() {
+    let (db_path, _dir) = common::setup_db().await;
+    let assert = rbx_cmd(&db_path)
+        .args([
+            "tracks", "cues", "add", "101", "1000", "--kind", "hot", "--slot", "1",
+        ])
+        .arg("--execute")
+        .assert()
+        .code(0);
+    let cue_id = stdout_json(&assert)["result"]["cue_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    rbx_cmd(&db_path)
+        .args([
+            "tracks",
+            "cues",
+            "update",
+            &cue_id,
+            "--color",
+            "9",
+            "--execute",
+        ])
+        .assert()
+        .code(0);
+
+    let pool = common::open_pool(&db_path).await;
+    let (color, index): (i64, i64) =
+        sqlx::query_as("SELECT Color, ColorTableIndex FROM djmdCue WHERE ID = ?")
+            .bind(&cue_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!((color, index), (-1, 18));
+    let (cues,): (String,) = sqlx::query_as("SELECT Cues FROM contentCue WHERE ContentID = '101'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let entries: serde_json::Value = serde_json::from_str(&cues).unwrap();
+    assert_eq!(entries[0]["ColorTableIndex"], 18);
+}
 
 /// `cues list` reports a hot cue's color as its position in the menu (1-16).
 #[tokio::test]

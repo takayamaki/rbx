@@ -461,14 +461,20 @@ async fn handle_track_cue_update(
             Err(e) => return db_error(e),
         }
     }
-    let color_value = match color.as_deref() {
+    let color_change = match color.as_deref() {
         None => None,
-        Some(_) if !cue.is_memory() => {
-            return usage_error("--color is only supported on memory cues for now")
-        }
-        Some("none") => Some(CLEARED_COLOR),
+        Some(name) if !cue.is_memory() => match hot_cue_color(name) {
+            Some(v) => Some(ColorChange::HotCue(v)),
+            None => {
+                return usage_error(&format!(
+                    "Unknown hot cue color: {} ({})",
+                    name, HOT_COLOR_HINT
+                ))
+            }
+        },
+        Some("none") => Some(ColorChange::MemoryCue(CLEARED_COLOR)),
         Some(name) => match memory_color(name) {
-            Some(v) => Some(v),
+            Some(v) => Some(ColorChange::MemoryCue(v)),
             None => {
                 return usage_error(&format!(
                     "Unknown color: {} ({}, or none)",
@@ -504,7 +510,7 @@ async fn handle_track_cue_update(
 
     let now = now_datetime();
     sqlx::query("BEGIN").execute(pool).await.ok();
-    let written = update_cue_row(pool, cue_id, msec, comment.as_deref(), color_value, &now).await;
+    let written = update_cue_row(pool, cue_id, msec, comment.as_deref(), color_change, &now).await;
     let written = match written {
         Ok(_) => content_cue::sync(pool, cue.content_id(), &[cue_id], &now).await,
         Err(e) => Err(e),
@@ -527,21 +533,30 @@ async fn handle_track_cue_update(
     )
 }
 
+/// A new color: memory cues keep it in Color, hot cues in ColorTableIndex.
+enum ColorChange {
+    MemoryCue(i32),
+    HotCue(i32),
+}
+
 /// Changes the cue row in place, as rekordbox does (same ID).
 async fn update_cue_row(
     pool: &SqlitePool,
     cue_id: &str,
     msec: Option<i64>,
     comment: Option<&str>,
-    color: Option<i32>,
+    color: Option<ColorChange>,
     now: &str,
 ) -> Result<(), sqlx::Error> {
-    if let Some(v) = color {
-        sqlx::query("UPDATE djmdCue SET Color = ? WHERE ID = ?")
-            .bind(v)
-            .bind(cue_id)
-            .execute(pool)
-            .await?;
+    let color_sql = match color {
+        Some(ColorChange::MemoryCue(v)) => Some(("UPDATE djmdCue SET Color = ? WHERE ID = ?", v)),
+        Some(ColorChange::HotCue(v)) => {
+            Some(("UPDATE djmdCue SET ColorTableIndex = ? WHERE ID = ?", v))
+        }
+        None => None,
+    };
+    if let Some((sql, v)) = color_sql {
+        sqlx::query(sql).bind(v).bind(cue_id).execute(pool).await?;
     }
     if let Some(v) = msec {
         sqlx::query("UPDATE djmdCue SET InMsec = ?, InFrame = ? WHERE ID = ?")
