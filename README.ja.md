@@ -142,9 +142,14 @@ rbx playlists list                     # プレイリスト・フォルダ一覧
 rbx playlists tracks list <playlist_id>
                                        # プレイリスト内のトラック一覧
 rbx playlists tracks add <playlist_id> <track_id>
-                                       # プレイリストに曲追加（dry-run）
+                                       # プレイリストの末尾に曲追加（dry-run）
+rbx playlists tracks add <playlist_id> <track_id> --position 3
+                                       # 3 曲目に挿入し、後ろの曲を繰り下げる（dry-run）
 rbx playlists tracks remove <playlist_id> <track_id>
                                        # プレイリストから曲除去（dry-run）
+rbx playlists tracks remove <playlist_id> --position 3
+                                       # 3 曲目だけを除去（dry-run）
+                                       # 同じ曲が 2 回入っているときはこちらを使う
 rbx playlists search <track_id>        # 曲が所属するプレイリスト逆引き
 rbx playlists create '名前' --parent FOLDER_ID
                                        # プレイリスト新規作成（dry-run）

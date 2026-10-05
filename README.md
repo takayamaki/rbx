@@ -155,9 +155,14 @@ rbx playlists list                     # all playlists and folders
 rbx playlists tracks list <playlist_id>
                                        # tracks in a playlist
 rbx playlists tracks add <playlist_id> <track_id>
-                                       # add track to playlist (dry-run)
+                                       # add track to the end of the playlist (dry-run)
+rbx playlists tracks add <playlist_id> <track_id> --position 3
+                                       # insert as the 3rd track; later tracks move down (dry-run)
 rbx playlists tracks remove <playlist_id> <track_id>
                                        # remove track from playlist (dry-run)
+rbx playlists tracks remove <playlist_id> --position 3
+                                       # remove only the 3rd track (dry-run)
+                                       # use this when the same track is in the playlist twice
 rbx playlists search <track_id>        # find playlists containing a track
 rbx playlists create 'name' --parent FOLDER_ID
                                        # create playlist (dry-run)

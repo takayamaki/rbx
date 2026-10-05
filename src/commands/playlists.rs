@@ -90,13 +90,15 @@ async fn handle_playlist_tracks(
         PlaylistTracksAction::Add {
             playlist_id,
             track_ids,
+            position,
             execute,
-        } => handle_playlist_track_add(pool, &playlist_id, &track_ids, execute).await,
+        } => handle_playlist_track_add(pool, &playlist_id, &track_ids, position, execute).await,
         PlaylistTracksAction::Remove {
             playlist_id,
             track_ids,
+            position,
             execute,
-        } => handle_playlist_track_remove(pool, &playlist_id, &track_ids, execute).await,
+        } => handle_playlist_track_remove(pool, &playlist_id, &track_ids, position, execute).await,
     }
 }
 
@@ -104,6 +106,7 @@ async fn handle_playlist_track_add(
     pool: &SqlitePool,
     playlist_id: &str,
     track_ids: &[String],
+    position: Option<i32>,
     execute: bool,
 ) -> (serde_json::Value, i32) {
     let pl_name = match resolve_playlist_name(pool, playlist_id).await {
@@ -153,12 +156,57 @@ async fn handle_playlist_track_add(
         Ok((n,)) => n.unwrap_or(0),
         Err(e) => return db_error(e),
     };
+    if let Some(pos) = position {
+        let row_count = match sqlx::query_as::<_, (i32,)>(
+            "SELECT COUNT(*) FROM djmdSongPlaylist WHERE PlaylistID = ?",
+        )
+        .bind(playlist_id)
+        .fetch_one(pool)
+        .await
+        {
+            Ok((n,)) => n,
+            Err(e) => return db_error(e),
+        };
+        if pos < 1 || pos > row_count + 1 {
+            return (
+                output::error(
+                    "usage",
+                    output::EXIT_USAGE,
+                    &format!(
+                        "--position must be between 1 and {} (playlist '{}' has {} tracks)",
+                        row_count + 1,
+                        pl_name,
+                        row_count
+                    ),
+                    Some("Use 'rbx playlists tracks list <playlist_id>' to see track numbers"),
+                ),
+                output::EXIT_USAGE,
+            );
+        }
+    }
+    // Rows that move down to make room, in TrackNo order
+    let shifted = match position {
+        None => Vec::new(),
+        Some(pos) => match sqlx::query_as::<_, (String,)>(
+            "SELECT ID FROM djmdSongPlaylist WHERE PlaylistID = ? AND TrackNo >= ? ORDER BY TrackNo",
+        )
+        .bind(playlist_id)
+        .bind(pos)
+        .fetch_all(pool)
+        .await
+        {
+            Ok(rows) => rows.into_iter().map(|(id,)| id).collect::<Vec<_>>(),
+            Err(e) => return db_error(e),
+        },
+    };
+    let first_track_no = position.unwrap_or(max_track_no + 1);
 
     let plan = serde_json::json!({
         "action": "add_tracks_to_playlist",
         "playlist": { "id": playlist_id, "name": pl_name },
         "tracks": entries,
-        "starting_track_no": max_track_no + 1,
+        "starting_track_no": first_track_no,
+        "shifted_count": shifted.len(),
     });
 
     if !execute {
@@ -178,10 +226,22 @@ async fn handle_playlist_track_add(
             return db_error(e);
         }
     };
+    let after = first_track_no + track_ids.len() as i32;
+    for (i, row_id) in shifted.iter().enumerate() {
+        if let Err(e) = sqlx::query("UPDATE djmdSongPlaylist SET TrackNo = ? WHERE ID = ?")
+            .bind(after + i as i32)
+            .bind(row_id)
+            .execute(pool)
+            .await
+        {
+            sqlx::query("ROLLBACK").execute(pool).await.ok();
+            return db_error(e);
+        }
+    }
     for (i, tid) in track_ids.iter().enumerate() {
         let new_id = Uuid::new_v4().to_string();
         let new_uuid = Uuid::new_v4().to_string();
-        let track_no = max_track_no + 1 + i as i32;
+        let track_no = first_track_no + i as i32;
         if let Err(e) = sqlx::query(
             "INSERT INTO djmdSongPlaylist (ID, PlaylistID, ContentID, TrackNo, UUID, \
              rb_data_status, rb_local_data_status, rb_local_deleted, rb_local_synced, rb_local_usn, \
@@ -216,6 +276,7 @@ async fn handle_playlist_track_remove(
     pool: &SqlitePool,
     playlist_id: &str,
     track_ids: &[String],
+    position: Option<i32>,
     execute: bool,
 ) -> (serde_json::Value, i32) {
     let pl_name = match resolve_playlist_name(pool, playlist_id).await {
@@ -235,6 +296,32 @@ async fn handle_playlist_track_remove(
     };
 
     let mut targets = Vec::new();
+    if let Some(pos) = position {
+        match sqlx::query_as::<_, (String, String, String)>(
+            "SELECT sp.ID, sp.ContentID, COALESCE(c.Title, '') \
+             FROM djmdSongPlaylist sp LEFT JOIN djmdContent c ON sp.ContentID = c.ID \
+             WHERE sp.PlaylistID = ? AND sp.TrackNo = ?",
+        )
+        .bind(playlist_id)
+        .bind(pos)
+        .fetch_optional(pool)
+        .await
+        {
+            Ok(Some((row_id, tid, title))) => targets.push((tid, title, row_id, pos)),
+            Ok(None) => {
+                return (
+                    output::error(
+                        "usage",
+                        output::EXIT_USAGE,
+                        &format!("Playlist '{}' has no track at position {}", pl_name, pos),
+                        Some("Use 'rbx playlists tracks list <playlist_id>' to see track numbers"),
+                    ),
+                    output::EXIT_USAGE,
+                )
+            }
+            Err(e) => return db_error(e),
+        }
+    }
     for tid in track_ids {
         let (title, _) = match resolve_track_summary(pool, tid).await {
             Ok(Some(t)) => t,
@@ -273,13 +360,19 @@ async fn handle_playlist_track_remove(
             }
             Err(e) => return db_error(e),
         };
-        targets.push((tid.clone(), existing.0, existing.1));
+        targets.push((tid.clone(), title, existing.0, existing.1));
     }
 
     let plan = serde_json::json!({
         "action": "remove_tracks_from_playlist",
         "playlist": { "id": playlist_id, "name": pl_name },
-        "track_ids": track_ids,
+        "track_ids": targets.iter().map(|(tid, ..)| tid).collect::<Vec<_>>(),
+        "tracks": targets
+            .iter()
+            .map(|(tid, title, _, track_no)| {
+                serde_json::json!({ "id": tid, "title": title, "track_no": track_no })
+            })
+            .collect::<Vec<_>>(),
         "count": targets.len(),
     });
 
@@ -291,7 +384,7 @@ async fn handle_playlist_track_remove(
     }
 
     sqlx::query("BEGIN").execute(pool).await.ok();
-    for (_, row_id, _) in &targets {
+    for (_, _, row_id, _) in &targets {
         let _ = sqlx::query("DELETE FROM djmdSongPlaylist WHERE ID = ?")
             .bind(row_id)
             .execute(pool)
@@ -608,7 +701,13 @@ pub(crate) fn describe(action: Option<&str>) -> Option<serde_json::Value> {
             "playlists tracks add",
             &[
                 flag("playlist_id", "string", true, "Playlist ID"),
-                flag("track_id", "string", true, "Track ID"),
+                flag("track_id", "string", true, "Track ID (one or more)"),
+                flag(
+                    "--position",
+                    "integer",
+                    false,
+                    "Insert as the N-th track (1-based, up to count + 1); later tracks move down. Default: append",
+                ),
                 flag(
                     "--execute",
                     "bool",
@@ -619,6 +718,7 @@ pub(crate) fn describe(action: Option<&str>) -> Option<serde_json::Value> {
             &mutation_result_schema("playlists.tracks.add"),
             &[
                 "rbx playlists tracks add PLAYLIST_ID TRACK_ID",
+                "rbx playlists tracks add PLAYLIST_ID TRACK_ID --position 3",
                 "rbx playlists tracks add PLAYLIST_ID TRACK_ID --execute",
             ],
         ),
@@ -626,7 +726,18 @@ pub(crate) fn describe(action: Option<&str>) -> Option<serde_json::Value> {
             "playlists tracks remove",
             &[
                 flag("playlist_id", "string", true, "Playlist ID"),
-                flag("track_id", "string", true, "Track ID"),
+                flag(
+                    "track_id",
+                    "string",
+                    false,
+                    "Track ID (one or more). Not allowed with --position",
+                ),
+                flag(
+                    "--position",
+                    "integer",
+                    false,
+                    "Remove only the N-th track (1-based). Use it when the same track is in the playlist twice",
+                ),
                 flag(
                     "--execute",
                     "bool",
@@ -637,6 +748,7 @@ pub(crate) fn describe(action: Option<&str>) -> Option<serde_json::Value> {
             &mutation_result_schema("playlists.tracks.remove"),
             &[
                 "rbx playlists tracks remove PLAYLIST_ID TRACK_ID",
+                "rbx playlists tracks remove PLAYLIST_ID --position 3",
                 "rbx playlists tracks remove PLAYLIST_ID TRACK_ID --execute",
             ],
         ),
