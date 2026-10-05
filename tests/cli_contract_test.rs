@@ -2331,7 +2331,55 @@ async fn cues_add_counts_active_memory_loops_toward_the_memory_cue_limit() {
 
 /// A second active loop of the same kind (memory or hot) is a conflict.
 #[tokio::test]
-async fn cues_add_second_active_loop_is_a_conflict() {}
+async fn cues_add_second_active_loop_is_a_conflict() {
+    let (db_path, _dir) = common::setup_db().await;
+    let add = |args: &[&str]| {
+        let mut cmd = rbx_cmd(&db_path);
+        cmd.args(["tracks", "cues", "add", "101"])
+            .args(args)
+            .arg("--execute");
+        cmd
+    };
+    add(&["1000", "--out-msec", "2000", "--active"])
+        .assert()
+        .code(0);
+    add(&[
+        "3000",
+        "--kind",
+        "hot",
+        "--slot",
+        "1",
+        "--out-msec",
+        "4000",
+        "--active",
+    ])
+    .assert()
+    .code(0);
+
+    let assert = add(&["5000", "--out-msec", "6000", "--active"])
+        .assert()
+        .code(5);
+    assert_eq!(stdout_json(&assert)["error"]["category"], "conflict");
+    add(&[
+        "7000",
+        "--kind",
+        "hot",
+        "--slot",
+        "2",
+        "--out-msec",
+        "8000",
+        "--active",
+    ])
+    .assert()
+    .code(5);
+
+    let pool = common::open_pool(&db_path).await;
+    let (rows,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM djmdCue WHERE ContentID = '101'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(rows, 2);
+}
 
 /// `--out-msec` at or before the start, `--beats` without `--out-msec`,
 /// or `--active` without `--out-msec` is a usage error.

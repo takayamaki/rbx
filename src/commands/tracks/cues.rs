@@ -457,6 +457,44 @@ async fn handle_track_cue_add(
         }
     }
 
+    // A track has at most one active memory loop and one active hot cue loop
+    if active {
+        let (sql, what) = if kind_int == 0 {
+            (
+                "SELECT COUNT(*) FROM djmdCue WHERE ContentID = ? AND Kind = 4 AND rb_local_deleted = 0",
+                "an active memory loop",
+            )
+        } else {
+            (
+                "SELECT COUNT(*) FROM djmdCue WHERE ContentID = ? AND Kind NOT IN (0, 4) \
+                 AND ActiveLoop = 1 AND rb_local_deleted = 0",
+                "an active hot cue loop",
+            )
+        };
+        match sqlx::query_as::<_, (i64,)>(sql)
+            .bind(track_id)
+            .fetch_one(pool)
+            .await
+        {
+            Ok((n,)) if n > 0 => {
+                return (
+                    output::error(
+                        "conflict",
+                        output::EXIT_CONFLICT,
+                        &format!("'{}' already has {}", title, what),
+                        Some(&format!(
+                            "Use 'rbx tracks cues list {}' to find it, or add this loop without --active",
+                            track_id
+                        )),
+                    ),
+                    output::EXIT_CONFLICT,
+                )
+            }
+            Ok(_) => {}
+            Err(e) => return db_error(e),
+        }
+    }
+
     let plan = serde_json::json!({
         "action": "add_cue",
         "track": { "id": track_id, "title": title, "artist": artist },
