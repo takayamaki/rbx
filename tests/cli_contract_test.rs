@@ -1936,4 +1936,28 @@ async fn cues_list_reports_hot_cue_menu_color() {
 
 /// A hot cue color outside 1-16, or a memory cue color name, is a usage error.
 #[tokio::test]
-async fn cues_hot_cue_color_outside_the_menu_is_a_usage_error() {}
+async fn cues_hot_cue_color_outside_the_menu_is_a_usage_error() {
+    let (db_path, _dir) = common::setup_db().await;
+    for color in ["0", "17", "red", "none"] {
+        let assert = rbx_cmd(&db_path)
+            .args([
+                "tracks", "cues", "add", "101", "1000", "--kind", "hot", "--slot", "1",
+            ])
+            .args(["--color", color, "--execute"])
+            .assert()
+            .code(2);
+        assert_eq!(
+            stdout_json(&assert)["error"]["category"],
+            "usage",
+            "--color {}",
+            color
+        );
+    }
+
+    let pool = common::open_pool(&db_path).await;
+    let (rows,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM djmdCue")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(rows, 0);
+}
