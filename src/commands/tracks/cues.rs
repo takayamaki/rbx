@@ -511,23 +511,34 @@ async fn handle_track_cue_delete(
         );
     }
 
+    // rekordbox removes cue rows; a real master.db has no soft-deleted cues
     let now = now_datetime();
-    match sqlx::query("UPDATE djmdCue SET rb_local_deleted = 1, updated_at = ? WHERE ID = ?")
-        .bind(&now)
+    sqlx::query("BEGIN").execute(pool).await.ok();
+    let written = sqlx::query("DELETE FROM djmdCue WHERE ID = ?")
         .bind(cue_id)
         .execute(pool)
-        .await
-    {
-        Ok(_) => (
-            output::mutation_done(
-                "tracks.cues.delete",
-                serde_json::json!({
-                    "cue": cue.to_json(),
-                }),
-            ),
-            output::EXIT_OK,
-        ),
-        Err(e) => db_error(e),
+        .await;
+    let written = match written {
+        Ok(_) => content_cue::sync(pool, cue.content_id(), &[cue_id], &now).await,
+        Err(e) => Err(e),
+    };
+    match written {
+        Ok(_) => {
+            sqlx::query("COMMIT").execute(pool).await.ok();
+            (
+                output::mutation_done(
+                    "tracks.cues.delete",
+                    serde_json::json!({
+                        "cue": cue.to_json(),
+                    }),
+                ),
+                output::EXIT_OK,
+            )
+        }
+        Err(e) => {
+            sqlx::query("ROLLBACK").execute(pool).await.ok();
+            db_error(e)
+        }
     }
 }
 

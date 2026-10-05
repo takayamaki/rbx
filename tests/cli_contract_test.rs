@@ -1663,7 +1663,42 @@ async fn cues_update_color_changes_the_row_in_place() {
 /// `cues delete` removes the row (rekordbox keeps no soft-deleted cues) and
 /// its entry in contentCue.
 #[tokio::test]
-async fn cues_delete_removes_the_row_and_its_content_cue_entry() {}
+async fn cues_delete_removes_the_row_and_its_content_cue_entry() {
+    let (db_path, _dir) = common::setup_db().await;
+    let pool = common::open_pool(&db_path).await;
+    seed_rekordbox_cue(&pool).await;
+    rbx_cmd(&db_path)
+        .args(["tracks", "cues", "add", "102", "30000", "--execute"])
+        .assert()
+        .code(0);
+
+    rbx_cmd(&db_path)
+        .args(["tracks", "cues", "delete", "900", "--execute"])
+        .assert()
+        .code(0);
+
+    let (rows,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM djmdCue WHERE ID = '900'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(rows, 0, "the row is removed, not soft-deleted");
+
+    let (cues, count): (String, i64) =
+        sqlx::query_as("SELECT Cues, rb_cue_count FROM contentCue WHERE ContentID = '102'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(count, 1);
+    let entries: serde_json::Value = serde_json::from_str(&cues).unwrap();
+    assert_eq!(entries[0]["InMsec"], 30000);
+
+    let (cue_updated,): (String,) =
+        sqlx::query_as("SELECT CueUpdated FROM djmdContent WHERE ID = '102'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(cue_updated, "5", "3 seeded + add + delete");
+}
 
 /// Deleting the last cue of a track removes its contentCue row
 /// (rekordbox has no contentCue rows with zero cues).
