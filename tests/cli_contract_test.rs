@@ -2181,7 +2181,30 @@ async fn cues_add_hot_cue_loop() {
 
 /// `--active` on a memory loop writes Kind 4, on a hot cue loop ActiveLoop 1.
 #[tokio::test]
-async fn cues_add_active_loop() {}
+async fn cues_add_active_loop() {
+    let (db_path, _dir) = common::setup_db().await;
+    rbx_cmd(&db_path)
+        .args(["tracks", "cues", "add", "101", "1000", "--out-msec", "4000"])
+        .args(["--beats", "8", "--active", "--execute"])
+        .assert()
+        .code(0);
+    rbx_cmd(&db_path)
+        .args([
+            "tracks", "cues", "add", "101", "5000", "--kind", "hot", "--slot", "2",
+        ])
+        .args(["--out-msec", "6000", "--active", "--execute"])
+        .assert()
+        .code(0);
+
+    let pool = common::open_pool(&db_path).await;
+    let rows: Vec<(i64, i64)> = sqlx::query_as(
+        "SELECT Kind, ActiveLoop FROM djmdCue WHERE ContentID = '101' ORDER BY InMsec",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(rows, vec![(4, 0), (2, 1)]);
+}
 
 /// `cues list` shows loops with out_msec, beats and active.
 #[tokio::test]

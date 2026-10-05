@@ -56,6 +56,8 @@ fn parse_beats(beats: &str) -> Option<i32> {
     Some(num << 16 | den)
 }
 
+/// Kind of an active memory loop. Its ActiveLoop column stays 0.
+const ACTIVE_MEMORY_LOOP_KIND: i32 = 4;
 /// Color of every loop rekordbox writes.
 const LOOP_COLOR: i32 = 255;
 /// rekordbox allows at most this many memory cues on one track.
@@ -195,6 +197,7 @@ pub(crate) async fn handle_track_cues(
             color,
             out_msec,
             beats,
+            active,
             execute,
         } => {
             let cue = NewCue {
@@ -205,6 +208,7 @@ pub(crate) async fn handle_track_cues(
                 color,
                 out_msec,
                 beats,
+                active,
             };
             handle_track_cue_add(pool, &track_id, cue, execute).await
         }
@@ -230,6 +234,7 @@ struct NewCue {
     color: Option<String>,
     out_msec: Option<i64>,
     beats: Option<String>,
+    active: bool,
 }
 
 /// The columns that differ between a plain cue and a loop.
@@ -295,6 +300,7 @@ async fn handle_track_cue_add(
         color,
         out_msec,
         beats,
+        active,
     } = cue;
     let beat_loop_size = match beats.as_deref().map(parse_beats) {
         None => 0,
@@ -481,6 +487,18 @@ async fn handle_track_cue_add(
         comment.clone(),
         beat_loop_size,
     );
+    // An active memory loop is Kind 4; an active hot cue loop keeps its Kind and has ActiveLoop 1
+    let (stored_kind, shape) = match (active, kind_int) {
+        (false, _) => (kind_int, shape),
+        (true, 0) => (ACTIVE_MEMORY_LOOP_KIND, shape),
+        (true, _) => (
+            kind_int,
+            CueShape {
+                active_loop: Some(1),
+                ..shape
+            },
+        ),
+    };
     sqlx::query("BEGIN").execute(pool).await.ok();
     let written = sqlx::query(
         "INSERT INTO djmdCue (ID, ContentID, InMsec, InFrame, InMpegFrame, InMpegAbs, \
@@ -492,7 +510,7 @@ async fn handle_track_cue_add(
     )
     .bind(&new_id).bind(track_id).bind(msec).bind(msec_to_frame(msec))
     .bind(shape.out_msec).bind(shape.out_frame)
-    .bind(kind_int).bind(shape.color).bind(shape.color_table_index)
+    .bind(stored_kind).bind(shape.color).bind(shape.color_table_index)
     .bind(shape.active_loop).bind(&shape.comment).bind(shape.beat_loop_size).bind(shape.cue_microsec)
     .bind(&content_uuid).bind(&new_uuid)
     .bind(&now).bind(&now)

@@ -169,6 +169,9 @@ pub(crate) enum TrackCuesAction {
         /// Loop length in beats, e.g. 8 or 1/2 (omit for a loop that is not on beats)
         #[arg(long)]
         beats: Option<String>,
+        /// Make the loop active (it loops when the track is loaded)
+        #[arg(long)]
+        active: bool,
         /// Actually apply the change
         #[arg(long)]
         execute: bool,
