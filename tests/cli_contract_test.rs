@@ -1210,11 +1210,66 @@ async fn playlist_tracks_remove_with_track_ids_and_position_is_a_usage_error() {
 // Order: the everyday case (add a memory cue) first, then the side tables,
 // hot cues, colors, list, update, delete, and the cases that are refused last.
 
+/// CueMicrosec, ActiveLoop, BeatLoopSize, ColorTableIndex, Comment, rb_local_usn
+type CueNullColumns = (
+    Option<i64>,
+    Option<i64>,
+    Option<i64>,
+    Option<i64>,
+    Option<String>,
+    Option<i64>,
+);
+
 /// A memory cue gets InFrame = floor(msec * 150 / 1000), OutMsec -1, and NULL
 /// in the columns rekordbox leaves empty (CueMicrosec, ActiveLoop, BeatLoopSize,
 /// ColorTableIndex, Comment). The cue row itself has no USN, like rekordbox's.
 #[tokio::test]
-async fn cues_add_memory_cue_writes_frame_and_leaves_unused_columns_null() {}
+async fn cues_add_memory_cue_writes_frame_and_leaves_unused_columns_null() {
+    let (db_path, _dir) = common::setup_db().await;
+
+    let assert = rbx_cmd(&db_path)
+        .args(["tracks", "cues", "add", "101", "141013", "--execute"])
+        .assert()
+        .code(0);
+    let json = stdout_json(&assert);
+    assert_eq!(json["kind"], "tracks.cues.add");
+    let cue_id = json["result"]["cue_id"].as_str().unwrap().to_string();
+
+    let pool = common::open_pool(&db_path).await;
+    let row: (i64, i64, i64, i64, i64, i64, i64, i64, i64, i64) = sqlx::query_as(
+        "SELECT InMsec, InFrame, InMpegFrame, InMpegAbs, OutMsec, OutFrame, \
+         OutMpegFrame, OutMpegAbs, Kind, Color FROM djmdCue WHERE ID = ?",
+    )
+    .bind(&cue_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(row, (141013, 21151, 0, 0, -1, 0, 0, 0, 0, -1));
+
+    let nulls: CueNullColumns = sqlx::query_as(
+        "SELECT CueMicrosec, ActiveLoop, BeatLoopSize, ColorTableIndex, Comment, rb_local_usn \
+             FROM djmdCue WHERE ID = ?",
+    )
+    .bind(&cue_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(nulls, (None, None, None, None, None, None));
+
+    let (uuid, content_uuid, created_at): (String, String, String) =
+        sqlx::query_as("SELECT UUID, ContentUUID, created_at FROM djmdCue WHERE ID = ?")
+            .bind(&cue_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(!uuid.is_empty());
+    assert_eq!(content_uuid, "c0000000-0000-0000-0000-000000000101");
+    assert!(
+        ts_regex().is_match(&created_at),
+        "bad timestamp: {}",
+        created_at
+    );
+}
 
 /// The first cue on a track creates its contentCue row: ID is the track UUID,
 /// Cues is a JSON array with the cue (NULL fields left out, ISO timestamps)

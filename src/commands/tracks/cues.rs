@@ -1,4 +1,4 @@
-use rbx::helpers::{allocate_usns, generate_numeric_id, now_datetime};
+use rbx::helpers::{generate_numeric_id, now_datetime};
 use rbx::output;
 use sqlx::sqlite::SqlitePool;
 use uuid::Uuid;
@@ -6,6 +6,11 @@ use uuid::Uuid;
 use crate::cli::TrackCuesAction;
 use crate::commands::{db_error, resolve_track_summary};
 use crate::rows::CueRow;
+
+/// rekordbox stores cue positions in frames of 1/150 s, rounded down.
+fn msec_to_frame(msec: i64) -> i64 {
+    msec * 150 / 1000
+}
 
 pub(crate) async fn handle_track_cues(
     pool: &SqlitePool,
@@ -184,10 +189,6 @@ async fn handle_track_cue_add(
     };
     let new_uuid = Uuid::new_v4().to_string();
     let now = now_datetime();
-    let usn = match allocate_usns(pool, 1).await {
-        Ok(v) => v,
-        Err(e) => return db_error(e),
-    };
     let content_uuid: String = match sqlx::query_as::<_, (String,)>(
         "SELECT COALESCE(UUID, '') FROM djmdContent WHERE ID = ?",
     )
@@ -202,14 +203,13 @@ async fn handle_track_cue_add(
         "INSERT INTO djmdCue (ID, ContentID, InMsec, InFrame, InMpegFrame, InMpegAbs, \
          OutMsec, OutFrame, OutMpegFrame, OutMpegAbs, Kind, Color, ColorTableIndex, \
          ActiveLoop, Comment, BeatLoopSize, CueMicrosec, \
-         ContentUUID, UUID, rb_data_status, rb_local_data_status, rb_local_deleted, rb_local_synced, rb_local_usn, \
+         ContentUUID, UUID, rb_data_status, rb_local_data_status, rb_local_deleted, rb_local_synced, \
          created_at, updated_at) \
-         VALUES (?, ?, ?, 0, 0, 0, -1, 0, 0, 0, ?, -1, 0, 0, ?, 0, ?, ?, ?, 0, 0, 0, 0, ?, ?, ?)"
+         VALUES (?, ?, ?, ?, 0, 0, -1, 0, 0, 0, ?, -1, NULL, NULL, ?, NULL, NULL, ?, ?, 0, 0, 0, 0, ?, ?)"
     )
-    .bind(&new_id).bind(track_id).bind(msec)
-    .bind(kind_int).bind(comment.as_deref().unwrap_or(""))
-    .bind(msec * 1000) // CueMicrosec = msec * 1000
-    .bind(&content_uuid).bind(&new_uuid).bind(usn)
+    .bind(&new_id).bind(track_id).bind(msec).bind(msec_to_frame(msec))
+    .bind(kind_int).bind(comment.as_deref().filter(|c| !c.is_empty()))
+    .bind(&content_uuid).bind(&new_uuid)
     .bind(&now).bind(&now)
     .execute(pool).await {
         Ok(_) => (
