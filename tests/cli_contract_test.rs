@@ -1824,7 +1824,39 @@ async fn cues_add_refuses_mp3_and_flac() {
 /// `--color N` on a hot cue picks the N-th color of the menu (1-16)
 /// and writes its ColorTableIndex to djmdCue and contentCue.
 #[tokio::test]
-async fn cues_add_hot_cue_with_menu_color() {}
+async fn cues_add_hot_cue_with_menu_color() {
+    let (db_path, _dir) = common::setup_db().await;
+
+    for (slot, color) in [("1", "1"), ("2", "5"), ("3", "16")] {
+        rbx_cmd(&db_path)
+            .args(["tracks", "cues", "add", "101", "1000", "--kind", "hot"])
+            .args(["--slot", slot, "--color", color, "--execute"])
+            .assert()
+            .code(0);
+    }
+
+    let pool = common::open_pool(&db_path).await;
+    let colors: Vec<(i64, i64, i64)> = sqlx::query_as(
+        "SELECT Kind, Color, ColorTableIndex FROM djmdCue WHERE ContentID = '101' ORDER BY Kind",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(colors, vec![(1, -1, 49), (2, -1, 1), (3, -1, 45)]);
+
+    let (cues,): (String,) = sqlx::query_as("SELECT Cues FROM contentCue WHERE ContentID = '101'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let entries: serde_json::Value = serde_json::from_str(&cues).unwrap();
+    let indexes: Vec<i64> = entries
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["ColorTableIndex"].as_i64().unwrap())
+        .collect();
+    assert_eq!(indexes, vec![49, 1, 45]);
+}
 
 /// `cues update --color N` changes a hot cue's ColorTableIndex in place.
 #[tokio::test]

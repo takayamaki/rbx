@@ -56,6 +56,19 @@ pub(crate) const MEMORY_COLORS: [&str; 8] = [
 ];
 const COLOR_HINT: &str = "use pink, red, orange, yellow, green, aqua, blue or purple";
 
+/// ColorTableIndex of the 16 colors in rekordbox's hot cue color menu,
+/// left to right and top to bottom.
+pub(crate) const HOT_CUE_COLORS: [i32; 16] =
+    [49, 56, 60, 62, 1, 5, 9, 14, 18, 22, 26, 30, 32, 38, 42, 45];
+const HOT_COLOR_HINT: &str =
+    "use 1-16: the position in rekordbox's hot cue color menu, left to right, top to bottom";
+
+/// Hot cue colors are given as their position (1-16) in rekordbox's color menu.
+fn hot_cue_color(position: &str) -> Option<i32> {
+    let n: usize = position.parse().ok()?;
+    HOT_CUE_COLORS.get(n.checked_sub(1)?).copied()
+}
+
 /// Memory cue colors are Color 0-7 in rekordbox's menu order.
 fn memory_color(name: &str) -> Option<i32> {
     MEMORY_COLORS
@@ -185,13 +198,20 @@ async fn handle_track_cue_add(
         color,
     } = cue;
     let (kind, color) = (kind.as_str(), color.as_deref());
-    let color_value = match color {
-        None => NO_COLOR,
-        Some(_) if kind != "memory" => {
-            return usage_error("--color is only supported on memory cues for now")
-        }
+    // Memory cues keep their color in Color, hot cues in ColorTableIndex
+    let (color_value, color_table_index) = match color {
+        None => (NO_COLOR, None),
+        Some(name) if kind != "memory" => match hot_cue_color(name) {
+            Some(v) => (NO_COLOR, Some(v)),
+            None => {
+                return usage_error(&format!(
+                    "Unknown hot cue color: {} ({})",
+                    name, HOT_COLOR_HINT
+                ))
+            }
+        },
         Some(name) => match memory_color(name) {
-            Some(v) => v,
+            Some(v) => (v, None),
             None => return usage_error(&format!("Unknown color: {} ({})", name, COLOR_HINT)),
         },
     };
@@ -355,10 +375,10 @@ async fn handle_track_cue_add(
          ActiveLoop, Comment, BeatLoopSize, CueMicrosec, \
          ContentUUID, UUID, rb_data_status, rb_local_data_status, rb_local_deleted, rb_local_synced, \
          created_at, updated_at) \
-         VALUES (?, ?, ?, ?, 0, 0, -1, 0, 0, 0, ?, ?, NULL, NULL, ?, NULL, NULL, ?, ?, 0, 0, 0, 0, ?, ?)"
+         VALUES (?, ?, ?, ?, 0, 0, -1, 0, 0, 0, ?, ?, ?, NULL, ?, NULL, NULL, ?, ?, 0, 0, 0, 0, ?, ?)"
     )
     .bind(&new_id).bind(track_id).bind(msec).bind(msec_to_frame(msec))
-    .bind(kind_int).bind(color_value).bind(comment.as_deref().filter(|c| !c.is_empty()))
+    .bind(kind_int).bind(color_value).bind(color_table_index).bind(comment.as_deref().filter(|c| !c.is_empty()))
     .bind(&content_uuid).bind(&new_uuid)
     .bind(&now).bind(&now)
     .execute(pool).await;
