@@ -1914,7 +1914,12 @@ async fn cues_update_hot_cue_color() {
 #[tokio::test]
 async fn cues_add_hot_cue_color_by_name() {
     let (db_path, _dir) = common::setup_db().await;
-    for (slot, color) in [("1", "violet"), ("2", "slateblue"), ("3", "red")] {
+    for (slot, color) in [
+        ("1", "violet"),
+        ("2", "slateblue"),
+        ("3", "red"),
+        ("4", "deeppink"),
+    ] {
         rbx_cmd(&db_path)
             .args(["tracks", "cues", "add", "101", "1000", "--kind", "hot"])
             .args(["--slot", slot, "--color", color, "--execute"])
@@ -1928,7 +1933,7 @@ async fn cues_add_hot_cue_color_by_name() {
             .fetch_all(&pool)
             .await
             .unwrap();
-    assert_eq!(indexes, vec![(49,), (62,), (42,)]);
+    assert_eq!(indexes, vec![(49,), (62,), (42,), (45,)]);
 }
 
 /// `cues update --color none` on a hot cue writes ColorTableIndex 0,

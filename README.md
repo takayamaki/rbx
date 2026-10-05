@@ -162,9 +162,12 @@ Pass a name or the position:
 | 13 | yellow | #C3AF04 | 32 |
 | 14 | orange | #E0641B | 38 |
 | 15 | red | #E62828 | 42 |
-| 16 | pink | #FF127B | 45 |
+| 16 | deeppink | #FF127B | 45 |
 
-Memory cue colors are pink, red, orange, yellow, green, aqua, blue and purple (Color 0-7).
+Memory cue colors are pink, red, orange, yellow, green, aqua, blue and purple (Color 0-7),
+the names in rekordbox's English menu.
+Hot cue colors close to a memory cue color share its name.
+The memory cue pink is a light magenta (closer to hot cue violet), so hot cue 16 is deeppink.
 
 Cues are written the way rekordbox writes them:
 the djmdCue row, the track's `contentCue` row (all its cues as JSON), and `djmdContent.CueUpdated`.

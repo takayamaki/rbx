@@ -62,8 +62,10 @@ const COLOR_HINT: &str = "use pink, red, orange, yellow, green, aqua, blue or pu
 /// left to right and top to bottom.
 pub(crate) const HOT_CUE_COLORS: [i32; 16] =
     [49, 56, 60, 62, 1, 5, 9, 14, 18, 22, 26, 30, 32, 38, 42, 45];
-/// Names for HOT_CUE_COLORS, picked from the colors seen in the menu.
+/// Names for HOT_CUE_COLORS, picked from the colors seen in the menu
+/// and the closest CSS color names.
 /// Colors close to a memory cue color share its name (red, blue, ...).
+/// The last one is deeppink, not pink: the memory cue "pink" is a light magenta, closer to violet.
 pub(crate) const HOT_CUE_COLOR_NAMES: [&str; 16] = [
     "violet",
     "purple",
@@ -80,10 +82,10 @@ pub(crate) const HOT_CUE_COLOR_NAMES: [&str; 16] = [
     "yellow",
     "orange",
     "red",
-    "pink",
+    "deeppink",
 ];
 const HOT_COLOR_HINT: &str = "use violet, purple, lavender, slateblue, blue, sky, aqua, teal, \
-     emerald, green, lime, olive, yellow, orange, red, pink, \
+     emerald, green, lime, olive, yellow, orange, red, deeppink, \
      or 1-16 for the position in rekordbox's hot cue color menu";
 
 /// Hot cue colors are given by name, or by their position (1-16) in rekordbox's color menu.
@@ -95,7 +97,8 @@ fn hot_cue_color(name: &str) -> Option<i32> {
     HOT_CUE_COLORS.get(position).copied()
 }
 
-/// Memory cue colors are Color 0-7 in rekordbox's menu order.
+/// Memory cue colors are Color 0-7 in rekordbox's menu order,
+/// named as in rekordbox's English menu.
 fn memory_color(name: &str) -> Option<i32> {
     MEMORY_COLORS
         .iter()
@@ -716,7 +719,7 @@ pub(crate) fn describe(action: &str) -> Option<serde_json::Value> {
                     "--color",
                     "string",
                     false,
-                    "Memory cue: pink, red, orange, yellow, green, aqua, blue or purple. Hot cue: violet, purple, lavender, slateblue, blue, sky, aqua, teal, emerald, green, lime, olive, yellow, orange, red, pink, or 1-16 (position in rekordbox's hot cue color menu, left to right, top to bottom)",
+                    "Memory cue: pink, red, orange, yellow, green, aqua, blue or purple. Hot cue: violet, purple, lavender, slateblue, blue, sky, aqua, teal, emerald, green, lime, olive, yellow, orange, red, deeppink, or 1-16 (position in rekordbox's hot cue color menu, left to right, top to bottom)",
                 ),
                 flag(
                     "--execute",
@@ -790,7 +793,7 @@ fn cue_schema() -> serde_json::Value {
             "out_msec": { "type": "integer|null", "description": "Loop end in milliseconds, null if not a loop" },
             "color": {
                 "type": "string|null",
-                "description": "Color name (memory cue: pink, red, orange, yellow, green, aqua, blue, purple; hot cue: violet, purple, lavender, slateblue, blue, sky, aqua, teal, emerald, green, lime, olive, yellow, orange, red, pink). null for no color",
+                "description": "Color name (memory cue: pink, red, orange, yellow, green, aqua, blue, purple; hot cue: violet, purple, lavender, slateblue, blue, sky, aqua, teal, emerald, green, lime, olive, yellow, orange, red, deeppink). null for no color",
             },
             "comment": { "type": "string|null" },
         },

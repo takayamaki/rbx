@@ -148,9 +148,11 @@ HOT CUE の色は、rekordbox の HOT CUE の色メニューの 16 色（左か�
 | 13 | yellow | 黄 | #C3AF04 | 32 |
 | 14 | orange | 橙 | #E0641B | 38 |
 | 15 | red | 赤 | #E62828 | 42 |
-| 16 | pink | ピンク | #FF127B | 45 |
+| 16 | deeppink | ディープピンク | #FF127B | 45 |
 
-MEMORY CUE の色は pink（桃）・red（赤）・orange（橙）・yellow（黄）・green（緑）・aqua（水）・blue（青）・purple（紫）（Color 0〜7）。
+MEMORY CUE の色は pink（桃）・red（赤）・orange（橙）・yellow（黄）・green（緑）・aqua（水）・blue（青）・purple（紫）（Color 0〜7）。rekordbox の英語メニューの表記と同じ。
+MEMORY CUE の色に近い HOT CUE の色は同じ名前にしている。
+MEMORY CUE の桃は明るい赤紫（HOT CUE の violet に近い）なので、HOT CUE の 16 番は deeppink にした。
 
 CUE は rekordbox と同じ形で書く。
 djmdCue の行に加えて、曲ごとの `contentCue`（その曲の全 CUE の JSON）と `djmdContent.CueUpdated` も更新する。
