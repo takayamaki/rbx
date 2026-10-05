@@ -2208,7 +2208,37 @@ async fn cues_add_active_loop() {
 
 /// `cues list` shows loops with out_msec, beats and active.
 #[tokio::test]
-async fn cues_list_reports_loops() {}
+async fn cues_list_reports_loops() {
+    let (db_path, _dir) = common::setup_db().await;
+    rbx_cmd(&db_path)
+        .args(["tracks", "cues", "add", "101", "1000", "--out-msec", "4000"])
+        .args(["--beats", "8", "--active", "--execute"])
+        .assert()
+        .code(0);
+    rbx_cmd(&db_path)
+        .args([
+            "tracks", "cues", "add", "101", "5000", "--kind", "hot", "--slot", "2",
+        ])
+        .args(["--out-msec", "5200", "--beats", "1/2", "--execute"])
+        .assert()
+        .code(0);
+
+    let assert = rbx_cmd(&db_path)
+        .args(["tracks", "cues", "list", "101"])
+        .assert()
+        .code(0);
+    let json = stdout_json(&assert);
+    let items = json["items"].as_array().unwrap();
+    let memory = items.iter().find(|c| c["in_msec"] == 1000).unwrap();
+    assert_eq!(memory["kind"], "memory");
+    assert_eq!(memory["out_msec"], 4000);
+    assert_eq!(memory["beats"], "8");
+    assert_eq!(memory["active"], true);
+    let hot = items.iter().find(|c| c["in_msec"] == 5000).unwrap();
+    assert_eq!(hot["slot"], 2);
+    assert_eq!(hot["beats"], "1/2");
+    assert_eq!(hot["active"], false);
+}
 
 /// `cues update --out-msec` moves the end of a loop and recomputes OutFrame.
 #[tokio::test]
