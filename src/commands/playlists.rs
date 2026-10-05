@@ -701,7 +701,13 @@ pub(crate) fn describe(action: Option<&str>) -> Option<serde_json::Value> {
             "playlists tracks add",
             &[
                 flag("playlist_id", "string", true, "Playlist ID"),
-                flag("track_id", "string", true, "Track ID"),
+                flag("track_id", "string", true, "Track ID (one or more)"),
+                flag(
+                    "--position",
+                    "integer",
+                    false,
+                    "Insert as the N-th track (1-based, up to count + 1); later tracks move down. Default: append",
+                ),
                 flag(
                     "--execute",
                     "bool",
@@ -712,6 +718,7 @@ pub(crate) fn describe(action: Option<&str>) -> Option<serde_json::Value> {
             &mutation_result_schema("playlists.tracks.add"),
             &[
                 "rbx playlists tracks add PLAYLIST_ID TRACK_ID",
+                "rbx playlists tracks add PLAYLIST_ID TRACK_ID --position 3",
                 "rbx playlists tracks add PLAYLIST_ID TRACK_ID --execute",
             ],
         ),
@@ -719,7 +726,18 @@ pub(crate) fn describe(action: Option<&str>) -> Option<serde_json::Value> {
             "playlists tracks remove",
             &[
                 flag("playlist_id", "string", true, "Playlist ID"),
-                flag("track_id", "string", true, "Track ID"),
+                flag(
+                    "track_id",
+                    "string",
+                    false,
+                    "Track ID (one or more). Not allowed with --position",
+                ),
+                flag(
+                    "--position",
+                    "integer",
+                    false,
+                    "Remove only the N-th track (1-based). Use it when the same track is in the playlist twice",
+                ),
                 flag(
                     "--execute",
                     "bool",
@@ -730,6 +748,7 @@ pub(crate) fn describe(action: Option<&str>) -> Option<serde_json::Value> {
             &mutation_result_schema("playlists.tracks.remove"),
             &[
                 "rbx playlists tracks remove PLAYLIST_ID TRACK_ID",
+                "rbx playlists tracks remove PLAYLIST_ID --position 3",
                 "rbx playlists tracks remove PLAYLIST_ID TRACK_ID --execute",
             ],
         ),
