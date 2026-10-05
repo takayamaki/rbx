@@ -429,7 +429,7 @@ async fn handle_track_cue_add(
 
     if kind_int == 0 {
         let count = sqlx::query_as::<_, (i64,)>(
-            "SELECT COUNT(*) FROM djmdCue WHERE ContentID = ? AND Kind = 0 AND rb_local_deleted = 0",
+            "SELECT COUNT(*) FROM djmdCue WHERE ContentID = ? AND Kind IN (0, 4) AND rb_local_deleted = 0",
         )
         .bind(track_id)
         .fetch_one(pool)

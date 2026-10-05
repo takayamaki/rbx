@@ -2293,7 +2293,41 @@ async fn cues_update_out_msec_moves_the_loop_end() {
 
 /// An active memory loop (Kind 4) counts toward the 10 memory cues.
 #[tokio::test]
-async fn cues_add_counts_active_memory_loops_toward_the_memory_cue_limit() {}
+async fn cues_add_counts_active_memory_loops_toward_the_memory_cue_limit() {
+    let (db_path, _dir) = common::setup_db().await;
+    rbx_cmd(&db_path)
+        .args([
+            "tracks",
+            "cues",
+            "add",
+            "101",
+            "500",
+            "--out-msec",
+            "900",
+            "--active",
+        ])
+        .arg("--execute")
+        .assert()
+        .code(0);
+    for i in 1..=9 {
+        rbx_cmd(&db_path)
+            .args([
+                "tracks",
+                "cues",
+                "add",
+                "101",
+                &(i * 1000).to_string(),
+                "--execute",
+            ])
+            .assert()
+            .code(0);
+    }
+
+    rbx_cmd(&db_path)
+        .args(["tracks", "cues", "add", "101", "11000", "--execute"])
+        .assert()
+        .code(5);
+}
 
 /// A second active loop of the same kind (memory or hot) is a conflict.
 #[tokio::test]
