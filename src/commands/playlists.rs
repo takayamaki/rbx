@@ -90,8 +90,9 @@ async fn handle_playlist_tracks(
         PlaylistTracksAction::Add {
             playlist_id,
             track_ids,
+            position,
             execute,
-        } => handle_playlist_track_add(pool, &playlist_id, &track_ids, execute).await,
+        } => handle_playlist_track_add(pool, &playlist_id, &track_ids, position, execute).await,
         PlaylistTracksAction::Remove {
             playlist_id,
             track_ids,
@@ -104,6 +105,7 @@ async fn handle_playlist_track_add(
     pool: &SqlitePool,
     playlist_id: &str,
     track_ids: &[String],
+    position: Option<i32>,
     execute: bool,
 ) -> (serde_json::Value, i32) {
     let pl_name = match resolve_playlist_name(pool, playlist_id).await {
@@ -153,12 +155,28 @@ async fn handle_playlist_track_add(
         Ok((n,)) => n.unwrap_or(0),
         Err(e) => return db_error(e),
     };
+    // Rows that move down to make room, in TrackNo order
+    let shifted = match position {
+        None => Vec::new(),
+        Some(pos) => match sqlx::query_as::<_, (String,)>(
+            "SELECT ID FROM djmdSongPlaylist WHERE PlaylistID = ? AND TrackNo >= ? ORDER BY TrackNo",
+        )
+        .bind(playlist_id)
+        .bind(pos)
+        .fetch_all(pool)
+        .await
+        {
+            Ok(rows) => rows.into_iter().map(|(id,)| id).collect::<Vec<_>>(),
+            Err(e) => return db_error(e),
+        },
+    };
+    let first_track_no = position.unwrap_or(max_track_no + 1);
 
     let plan = serde_json::json!({
         "action": "add_tracks_to_playlist",
         "playlist": { "id": playlist_id, "name": pl_name },
         "tracks": entries,
-        "starting_track_no": max_track_no + 1,
+        "starting_track_no": first_track_no,
     });
 
     if !execute {
@@ -178,10 +196,22 @@ async fn handle_playlist_track_add(
             return db_error(e);
         }
     };
+    let after = first_track_no + track_ids.len() as i32;
+    for (i, row_id) in shifted.iter().enumerate() {
+        if let Err(e) = sqlx::query("UPDATE djmdSongPlaylist SET TrackNo = ? WHERE ID = ?")
+            .bind(after + i as i32)
+            .bind(row_id)
+            .execute(pool)
+            .await
+        {
+            sqlx::query("ROLLBACK").execute(pool).await.ok();
+            return db_error(e);
+        }
+    }
     for (i, tid) in track_ids.iter().enumerate() {
         let new_id = Uuid::new_v4().to_string();
         let new_uuid = Uuid::new_v4().to_string();
-        let track_no = max_track_no + 1 + i as i32;
+        let track_no = first_track_no + i as i32;
         if let Err(e) = sqlx::query(
             "INSERT INTO djmdSongPlaylist (ID, PlaylistID, ContentID, TrackNo, UUID, \
              rb_data_status, rb_local_data_status, rb_local_deleted, rb_local_synced, rb_local_usn, \

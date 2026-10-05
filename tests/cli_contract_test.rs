@@ -925,10 +925,100 @@ async fn bulk_update_reads_the_plan_from_stdin() {
 // dry-run, several tracks at once, the edge positions, and removing by
 // position (for a track that is in the playlist twice) last.
 
+/// Creates tracks besides the seeded 101 / 102 (no-op for those).
+async fn seed_tracks(pool: &sqlx::SqlitePool, track_ids: &[&str]) {
+    for tid in track_ids {
+        sqlx::query(
+            "INSERT OR IGNORE INTO djmdContent (ID, Title, UUID, rb_local_usn, created_at, updated_at) \
+             VALUES (?, ?, ?, 10, ?, ?)",
+        )
+        .bind(tid)
+        .bind(format!("Track {}", tid))
+        .bind(format!("c0000000-0000-0000-0000-000000000{}", tid))
+        .bind(common::SEED_TS)
+        .bind(common::SEED_TS)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+}
+
+/// Fills the seeded playlist 501 with the given tracks, in order.
+async fn seed_playlist(pool: &sqlx::SqlitePool, track_ids: &[&str]) {
+    seed_tracks(pool, track_ids).await;
+    for (i, tid) in track_ids.iter().enumerate() {
+        sqlx::query(
+            "INSERT INTO djmdSongPlaylist \
+             (ID, PlaylistID, ContentID, TrackNo, UUID, rb_local_usn, created_at, updated_at) \
+             VALUES (?, '501', ?, ?, ?, 10, ?, ?)",
+        )
+        .bind(format!("sp{}", i + 1))
+        .bind(tid)
+        .bind((i + 1) as i64)
+        .bind(format!("s0000000-0000-0000-0000-00000000000{}", i + 1))
+        .bind(common::SEED_TS)
+        .bind(common::SEED_TS)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+}
+
+/// (TrackNo, track ID) of every row in playlist 501, in TrackNo order.
+async fn playlist_rows(pool: &sqlx::SqlitePool) -> Vec<(i64, String)> {
+    sqlx::query_as(
+        "SELECT TrackNo, ContentID FROM djmdSongPlaylist WHERE PlaylistID = '501' ORDER BY TrackNo",
+    )
+    .fetch_all(pool)
+    .await
+    .unwrap()
+}
+
+fn rows(expected: &[(i64, &str)]) -> Vec<(i64, String)> {
+    expected.iter().map(|(n, t)| (*n, t.to_string())).collect()
+}
+
 /// `--position N` inserts the track as the N-th row (1-based) and moves every
 /// later row down by one. The new row has the full native column set.
 #[tokio::test]
-async fn playlist_tracks_add_at_position_inserts_and_shifts_later_rows() {}
+async fn playlist_tracks_add_at_position_inserts_and_shifts_later_rows() {
+    let (db_path, _dir) = common::setup_db().await;
+    let pool = common::open_pool(&db_path).await;
+    seed_playlist(&pool, &["101", "102", "103"]).await;
+    seed_tracks(&pool, &["104"]).await;
+
+    let assert = rbx_cmd(&db_path)
+        .args(["playlists", "tracks", "add", "501", "104"])
+        .args(["--position", "2", "--execute"])
+        .assert()
+        .code(0);
+    let json = stdout_json(&assert);
+    assert_eq!(json["kind"], "playlists.tracks.add");
+    assert_eq!(json["result"]["added"][0]["track_no"], 2);
+
+    assert_eq!(
+        playlist_rows(&pool).await,
+        rows(&[(1, "101"), (2, "104"), (3, "102"), (4, "103")])
+    );
+
+    let (uuid, usn, created_at, ds, lds, ld, ls): (String, i64, String, i64, i64, i64, i64) =
+        sqlx::query_as(
+            "SELECT UUID, rb_local_usn, created_at, \
+             rb_data_status, rb_local_data_status, rb_local_deleted, rb_local_synced \
+             FROM djmdSongPlaylist WHERE PlaylistID = '501' AND ContentID = '104'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(!uuid.is_empty());
+    assert_eq!(usn, 1001, "first allocation from seeded counter 1000");
+    assert!(
+        ts_regex().is_match(&created_at),
+        "bad timestamp: {}",
+        created_at
+    );
+    assert_eq!((ds, lds, ld, ls), (0, 0, 0, 0));
+}
 
 /// Without --execute nothing is written. The plan shows the position and how
 /// many existing rows would move down.
