@@ -166,6 +166,9 @@ pub(crate) enum TrackCuesAction {
         /// Loop end in milliseconds (makes the cue a loop)
         #[arg(long)]
         out_msec: Option<i64>,
+        /// Loop length in beats, e.g. 8 or 1/2 (omit for a loop that is not on beats)
+        #[arg(long)]
+        beats: Option<String>,
         /// Actually apply the change
         #[arg(long)]
         execute: bool,

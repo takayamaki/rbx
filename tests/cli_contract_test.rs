@@ -2127,7 +2127,24 @@ async fn cues_add_memory_loop_writes_the_loop_columns() {
 
 /// `--beats 8` writes BeatLoopSize 524289 (8 << 16 | 1); `--beats 1/2` writes 65538.
 #[tokio::test]
-async fn cues_add_loop_with_beats_sets_beat_loop_size() {}
+async fn cues_add_loop_with_beats_sets_beat_loop_size() {
+    let (db_path, _dir) = common::setup_db().await;
+    for (msec, out, beats) in [("1000", "4000", "8"), ("5000", "5200", "1/2")] {
+        rbx_cmd(&db_path)
+            .args(["tracks", "cues", "add", "101", msec, "--out-msec", out])
+            .args(["--beats", beats, "--execute"])
+            .assert()
+            .code(0);
+    }
+
+    let pool = common::open_pool(&db_path).await;
+    let sizes: Vec<(i64,)> =
+        sqlx::query_as("SELECT BeatLoopSize FROM djmdCue WHERE ContentID = '101' ORDER BY InMsec")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(sizes, vec![(524289,), (65538,)]);
+}
 
 /// A hot cue loop keeps its slot Kind; `--color` sets its ColorTableIndex.
 #[tokio::test]

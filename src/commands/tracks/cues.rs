@@ -45,6 +45,17 @@ async fn check_position_format(
     )))
 }
 
+/// BeatLoopSize is the loop length in beats as numerator << 16 | denominator:
+/// 8 beats is 524289, half a beat is 65538.
+fn parse_beats(beats: &str) -> Option<i32> {
+    let (num, den) = beats.split_once('/').unwrap_or((beats, "1"));
+    let (num, den): (i32, i32) = (num.trim().parse().ok()?, den.trim().parse().ok()?);
+    if !(1..=0xFFFF).contains(&num) || !(1..=0xFFFF).contains(&den) {
+        return None;
+    }
+    Some(num << 16 | den)
+}
+
 /// Color of every loop rekordbox writes.
 const LOOP_COLOR: i32 = 255;
 /// rekordbox allows at most this many memory cues on one track.
@@ -183,6 +194,7 @@ pub(crate) async fn handle_track_cues(
             comment,
             color,
             out_msec,
+            beats,
             execute,
         } => {
             let cue = NewCue {
@@ -192,6 +204,7 @@ pub(crate) async fn handle_track_cues(
                 comment,
                 color,
                 out_msec,
+                beats,
             };
             handle_track_cue_add(pool, &track_id, cue, execute).await
         }
@@ -216,6 +229,7 @@ struct NewCue {
     comment: Option<String>,
     color: Option<String>,
     out_msec: Option<i64>,
+    beats: Option<String>,
 }
 
 /// The columns that differ between a plain cue and a loop.
@@ -239,6 +253,7 @@ impl CueShape {
         color: i32,
         color_table_index: Option<i32>,
         comment: Option<String>,
+        beat_loop_size: i32,
     ) -> Self {
         let comment = comment.filter(|c| !c.is_empty());
         match out_msec {
@@ -258,7 +273,7 @@ impl CueShape {
                 color: LOOP_COLOR,
                 color_table_index: Some(color_table_index.unwrap_or(0)),
                 active_loop: Some(0),
-                beat_loop_size: Some(0),
+                beat_loop_size: Some(beat_loop_size),
                 cue_microsec: Some(0),
                 comment: Some(comment.unwrap_or_default()),
             },
@@ -279,7 +294,15 @@ async fn handle_track_cue_add(
         comment,
         color,
         out_msec,
+        beats,
     } = cue;
+    let beat_loop_size = match beats.as_deref().map(parse_beats) {
+        None => 0,
+        Some(Some(v)) => v,
+        Some(None) => {
+            return usage_error("--beats must be a number of beats like 8, or a fraction like 1/2")
+        }
+    };
     let (kind, color) = (kind.as_str(), color.as_deref());
     // Memory cues keep their color in Color, hot cues in ColorTableIndex
     let (color_value, color_table_index) = match color {
@@ -451,7 +474,13 @@ async fn handle_track_cue_add(
         Ok((u,)) => u,
         Err(e) => return db_error(e),
     };
-    let shape = CueShape::new(out_msec, color_value, color_table_index, comment.clone());
+    let shape = CueShape::new(
+        out_msec,
+        color_value,
+        color_table_index,
+        comment.clone(),
+        beat_loop_size,
+    );
     sqlx::query("BEGIN").execute(pool).await.ok();
     let written = sqlx::query(
         "INSERT INTO djmdCue (ID, ContentID, InMsec, InFrame, InMpegFrame, InMpegAbs, \
