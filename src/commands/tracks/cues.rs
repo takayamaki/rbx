@@ -311,6 +311,15 @@ async fn handle_track_cue_add(
         beats,
         active,
     } = cue;
+    match out_msec {
+        Some(out) if out <= msec => {
+            return usage_error("--out-msec must be after the cue position (msec)")
+        }
+        None if beats.is_some() || active => {
+            return usage_error("--beats and --active need --out-msec: they only apply to loops")
+        }
+        _ => {}
+    }
     let beat_loop_size = match beats.as_deref().map(parse_beats) {
         None => 0,
         Some(Some(v)) => v,

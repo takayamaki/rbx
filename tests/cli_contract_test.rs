@@ -2384,4 +2384,34 @@ async fn cues_add_second_active_loop_is_a_conflict() {
 /// `--out-msec` at or before the start, `--beats` without `--out-msec`,
 /// or `--active` without `--out-msec` is a usage error.
 #[tokio::test]
-async fn cues_add_bad_loop_flags_are_usage_errors() {}
+async fn cues_add_bad_loop_flags_are_usage_errors() {
+    let (db_path, _dir) = common::setup_db().await;
+    let cases: [&[&str]; 5] = [
+        &["--out-msec", "1000"],
+        &["--out-msec", "500"],
+        &["--beats", "8"],
+        &["--active"],
+        &["--out-msec", "2000", "--beats", "0"],
+    ];
+    for args in cases {
+        let assert = rbx_cmd(&db_path)
+            .args(["tracks", "cues", "add", "101", "1000"])
+            .args(args)
+            .arg("--execute")
+            .assert()
+            .code(2);
+        assert_eq!(
+            stdout_json(&assert)["error"]["category"],
+            "usage",
+            "{:?}",
+            args
+        );
+    }
+
+    let pool = common::open_pool(&db_path).await;
+    let (rows,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM djmdCue")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(rows, 0);
+}
