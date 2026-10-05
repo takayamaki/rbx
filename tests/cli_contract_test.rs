@@ -1422,7 +1422,48 @@ async fn cues_add_appends_to_content_cue_and_keeps_other_entries_as_they_are() {
 /// Adding a cue bumps djmdContent.CueUpdated by one and gives contentCue and
 /// djmdContent new USNs, in that order, within the agentRegistry counter.
 #[tokio::test]
-async fn cues_add_bumps_cue_updated_and_usns() {}
+async fn cues_add_bumps_cue_updated_and_usns() {
+    let (db_path, _dir) = common::setup_db().await;
+    let pool = common::open_pool(&db_path).await;
+    seed_rekordbox_cue(&pool).await;
+
+    rbx_cmd(&db_path)
+        .args(["tracks", "cues", "add", "102", "30000", "--execute"])
+        .assert()
+        .code(0);
+
+    let (cue_updated, track_usn, track_updated_at): (String, i64, String) = sqlx::query_as(
+        "SELECT CueUpdated, rb_local_usn, updated_at FROM djmdContent WHERE ID = '102'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(cue_updated, "4");
+    assert_ne!(track_updated_at, common::SEED_TS);
+    assert!(
+        ts_regex().is_match(&track_updated_at),
+        "bad timestamp: {}",
+        track_updated_at
+    );
+
+    let (content_cue_usn,): (i64,) =
+        sqlx::query_as("SELECT rb_local_usn FROM contentCue WHERE ContentID = '102'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        (content_cue_usn, track_usn),
+        (1001, 1002),
+        "contentCue first"
+    );
+
+    let (counter,): (i64,) =
+        sqlx::query_as("SELECT int_1 FROM agentRegistry WHERE registry_id = 'localUpdateCount'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(counter, 1002);
+}
 
 /// Hot cue slots A-C are Kind 1-3 and D-H are Kind 5-9 (Kind 4 is not a slot).
 #[tokio::test]

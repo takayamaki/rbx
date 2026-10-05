@@ -91,8 +91,11 @@ fn decode_error(e: serde_json::Error) -> sqlx::Error {
     sqlx::Error::Decode(Box::new(e))
 }
 
-/// Rebuilds the contentCue row of `track_id` from its djmdCue rows.
-/// `changed` lists the cue IDs whose entries must be written again.
+/// Rebuilds the contentCue row of `track_id` from its djmdCue rows,
+/// then marks the track as changed the way rekordbox does:
+/// djmdContent.CueUpdated goes up by one per changed cue,
+/// and contentCue and djmdContent get new USNs, in that order.
+/// `changed` lists the cue IDs that were added, updated or deleted.
 /// Call it inside the same transaction as the djmdCue change.
 pub(crate) async fn sync(
     pool: &SqlitePool,
@@ -146,12 +149,35 @@ pub(crate) async fn sync(
             .bind(track_id)
             .execute(pool)
             .await?;
-        return Ok(());
+    } else {
+        write_row(pool, track_id, &entries, existing.is_some(), now).await?;
     }
 
+    let usn = allocate_usns(pool, 1).await?;
+    sqlx::query(
+        "UPDATE djmdContent SET \
+         CueUpdated = CAST(COALESCE(CAST(CueUpdated AS INTEGER), 0) + ? AS TEXT), \
+         rb_local_usn = ?, updated_at = ? WHERE ID = ?",
+    )
+    .bind(changed.len() as i64)
+    .bind(usn)
+    .bind(now)
+    .bind(track_id)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+async fn write_row(
+    pool: &SqlitePool,
+    track_id: &str,
+    entries: &[String],
+    exists: bool,
+    now: &str,
+) -> Result<(), sqlx::Error> {
     let cues_json = format!("[{}]", entries.join(","));
     let usn = allocate_usns(pool, 1).await?;
-    if existing.is_some() {
+    if exists {
         sqlx::query(
             "UPDATE contentCue SET Cues = ?, rb_cue_count = ?, rb_local_usn = ?, updated_at = ? \
              WHERE ContentID = ?",
