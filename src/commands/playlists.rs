@@ -177,6 +177,7 @@ async fn handle_playlist_track_add(
         "playlist": { "id": playlist_id, "name": pl_name },
         "tracks": entries,
         "starting_track_no": first_track_no,
+        "shifted_count": shifted.len(),
     });
 
     if !execute {

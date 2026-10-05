@@ -1023,7 +1023,34 @@ async fn playlist_tracks_add_at_position_inserts_and_shifts_later_rows() {
 /// Without --execute nothing is written. The plan shows the position and how
 /// many existing rows would move down.
 #[tokio::test]
-async fn playlist_tracks_add_at_position_dry_run_writes_nothing() {}
+async fn playlist_tracks_add_at_position_dry_run_writes_nothing() {
+    let (db_path, _dir) = common::setup_db().await;
+    let pool = common::open_pool(&db_path).await;
+    seed_playlist(&pool, &["101", "102", "103"]).await;
+    seed_tracks(&pool, &["104"]).await;
+
+    let assert = rbx_cmd(&db_path)
+        .args([
+            "playlists",
+            "tracks",
+            "add",
+            "501",
+            "104",
+            "--position",
+            "2",
+        ])
+        .assert()
+        .code(0);
+    let json = stdout_json(&assert);
+    assert_eq!(json["dry_run"], true);
+    assert_eq!(json["plan"]["starting_track_no"], 2);
+    assert_eq!(json["plan"]["shifted_count"], 2);
+
+    assert_eq!(
+        playlist_rows(&pool).await,
+        rows(&[(1, "101"), (2, "102"), (3, "103")])
+    );
+}
 
 /// Several track IDs with `--position N` go in at N, N+1, ... in the order
 /// they were given.
