@@ -689,7 +689,7 @@ pub(crate) fn describe(action: &str) -> Option<serde_json::Value> {
                     "--color",
                     "string",
                     false,
-                    "Memory cue color: pink, red, orange, yellow, green, aqua, blue or purple. Not supported on hot cues yet",
+                    "Memory cue: pink, red, orange, yellow, green, aqua, blue or purple. Hot cue: 1-16, the position in rekordbox's hot cue color menu (left to right, top to bottom)",
                 ),
                 flag(
                     "--execute",
@@ -702,7 +702,7 @@ pub(crate) fn describe(action: &str) -> Option<serde_json::Value> {
             &[
                 "rbx tracks cues add TRACK_ID 12345",
                 "rbx tracks cues add TRACK_ID 12345 --color green",
-                "rbx tracks cues add TRACK_ID 12345 --kind hot --slot 1 --comment 'Drop' --execute",
+                "rbx tracks cues add TRACK_ID 12345 --kind hot --slot 1 --color 9 --comment 'Drop' --execute",
             ],
         ),
         "cues update" => describe_command(
@@ -715,7 +715,7 @@ pub(crate) fn describe(action: &str) -> Option<serde_json::Value> {
                     "--color",
                     "string",
                     false,
-                    "Memory cue color: pink, red, orange, yellow, green, aqua, blue, purple, or none",
+                    "Memory cue: pink, red, orange, yellow, green, aqua, blue, purple, or none. Hot cue: 1-16 (menu position)",
                 ),
                 flag(
                     "--execute",
@@ -762,9 +762,8 @@ fn cue_schema() -> serde_json::Value {
             "in_msec": { "type": "integer|null", "description": "Cue position in milliseconds" },
             "out_msec": { "type": "integer|null", "description": "Loop end in milliseconds, null if not a loop" },
             "color": {
-                "type": "string|null",
-                "enum": ["pink", "red", "orange", "yellow", "green", "aqua", "blue", "purple", null],
-                "description": "Memory cue color. null for no color and for hot cues (their palette is not supported yet)",
+                "type": "string|integer|null",
+                "description": "Memory cue: pink, red, orange, yellow, green, aqua, blue or purple. Hot cue: 1-16, the position in the hot cue color menu. null for no color",
             },
             "comment": { "type": "string|null" },
         },

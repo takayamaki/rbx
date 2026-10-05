@@ -120,8 +120,9 @@ rbx tracks cues list <track_id>        # MEMORY/HOT CUE 一覧
 rbx tracks cues add <track_id> 12345   # MEMORY CUE 追加（dry-run）
 rbx tracks cues add <track_id> 12345 --color green
                                        # 緑の MEMORY CUE 追加（dry-run）
-rbx tracks cues add <track_id> 92000 --kind hot --slot 1 --comment 'Drop'
-                                       # HOT CUE をスロット1（= A。1〜8 が A〜H）に追加（dry-run）
+rbx tracks cues add <track_id> 92000 --kind hot --slot 1 --color 9 --comment 'Drop'
+                                       # HOT CUE をスロット1（= A。1〜8 が A〜H）に、HOT CUE の色メニューの
+                                       # 9 番目の色（1〜16、左から右・上の段から）で追加（dry-run）
 rbx tracks cues update <cue_id> --msec 15000 --comment 'Verse'
                                        # CUE の位置・コメント変更（dry-run）
 rbx tracks cues update <cue_id> --color none
@@ -132,7 +133,7 @@ rbx tracks cues delete <cue_id>        # CUE 削除（dry-run）
 CUE は rekordbox と同じ形で書く。
 djmdCue の行に加えて、曲ごとの `contentCue`（その曲の全 CUE の JSON）と `djmdContent.CueUpdated` も更新する。
 未対応:
-HOT CUE の色、ループ、
+HOT CUE の色の初期化、ループ、
 mp3 / FLAC への CUE の配置（rekordbox はファイル内のオフセットも持つため）。
 
 ### tracks mytags（トラックへのタグ付け外し）
