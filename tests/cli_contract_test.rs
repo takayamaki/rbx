@@ -2051,9 +2051,79 @@ async fn cues_hot_cue_color_outside_the_menu_is_a_usage_error() {
 // An active memory loop is Kind 4 (ActiveLoop stays 0); an active hot cue loop has ActiveLoop 1.
 // A track has at most one active memory loop and one active hot cue loop.
 
+/// Kind, InFrame, OutMsec, OutFrame, Color, ColorTableIndex, ActiveLoop,
+/// BeatLoopSize, CueMicrosec, Comment
+type LoopColumns = (
+    i64,
+    i64,
+    i64,
+    i64,
+    i64,
+    Option<i64>,
+    Option<i64>,
+    Option<i64>,
+    Option<i64>,
+    Option<String>,
+);
+
 /// `--out-msec` makes a memory cue a loop with the loop columns rekordbox writes.
 #[tokio::test]
-async fn cues_add_memory_loop_writes_the_loop_columns() {}
+async fn cues_add_memory_loop_writes_the_loop_columns() {
+    let (db_path, _dir) = common::setup_db().await;
+    let assert = rbx_cmd(&db_path)
+        .args([
+            "tracks",
+            "cues",
+            "add",
+            "101",
+            "104987",
+            "--out-msec",
+            "109160",
+            "--execute",
+        ])
+        .assert()
+        .code(0);
+    let cue_id = stdout_json(&assert)["result"]["cue_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let pool = common::open_pool(&db_path).await;
+    let row: LoopColumns = sqlx::query_as(
+        "SELECT Kind, InFrame, OutMsec, OutFrame, Color, ColorTableIndex, ActiveLoop, \
+         BeatLoopSize, CueMicrosec, Comment FROM djmdCue WHERE ID = ?",
+    )
+    .bind(&cue_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        row,
+        (
+            0,
+            15748,
+            109160,
+            16374,
+            255,
+            Some(0),
+            Some(0),
+            Some(0),
+            Some(0),
+            Some(String::new())
+        )
+    );
+
+    let (cues,): (String,) = sqlx::query_as("SELECT Cues FROM contentCue WHERE ContentID = '101'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let entry = &serde_json::from_str::<serde_json::Value>(&cues).unwrap()[0];
+    assert_eq!(entry["OutMsec"], 109160);
+    assert_eq!(entry["OutFrame"], 16374);
+    assert_eq!(entry["Color"], 255);
+    assert_eq!(entry["BeatLoopSize"], 0);
+    assert_eq!(entry["CueMicrosec"], 0);
+}
 
 /// `--beats 8` writes BeatLoopSize 524289 (8 << 16 | 1); `--beats 1/2` writes 65538.
 #[tokio::test]

@@ -45,6 +45,8 @@ async fn check_position_format(
     )))
 }
 
+/// Color of every loop rekordbox writes.
+const LOOP_COLOR: i32 = 255;
 /// rekordbox allows at most this many memory cues on one track.
 const MAX_MEMORY_CUES: i64 = 10;
 /// Color of a cue that never had one.
@@ -180,6 +182,7 @@ pub(crate) async fn handle_track_cues(
             slot,
             comment,
             color,
+            out_msec,
             execute,
         } => {
             let cue = NewCue {
@@ -188,6 +191,7 @@ pub(crate) async fn handle_track_cues(
                 slot,
                 comment,
                 color,
+                out_msec,
             };
             handle_track_cue_add(pool, &track_id, cue, execute).await
         }
@@ -211,6 +215,55 @@ struct NewCue {
     slot: Option<i32>,
     comment: Option<String>,
     color: Option<String>,
+    out_msec: Option<i64>,
+}
+
+/// The columns that differ between a plain cue and a loop.
+/// rekordbox writes loops with Color 255, ColorTableIndex 0 (or the hot cue color),
+/// CueMicrosec 0, Comment '' and 0 in ActiveLoop / BeatLoopSize;
+/// plain cues have NULL in those.
+struct CueShape {
+    out_msec: i64,
+    out_frame: i64,
+    color: i32,
+    color_table_index: Option<i32>,
+    active_loop: Option<i32>,
+    beat_loop_size: Option<i32>,
+    cue_microsec: Option<i64>,
+    comment: Option<String>,
+}
+
+impl CueShape {
+    fn new(
+        out_msec: Option<i64>,
+        color: i32,
+        color_table_index: Option<i32>,
+        comment: Option<String>,
+    ) -> Self {
+        let comment = comment.filter(|c| !c.is_empty());
+        match out_msec {
+            None => CueShape {
+                out_msec: -1,
+                out_frame: 0,
+                color,
+                color_table_index,
+                active_loop: None,
+                beat_loop_size: None,
+                cue_microsec: None,
+                comment,
+            },
+            Some(out) => CueShape {
+                out_msec: out,
+                out_frame: msec_to_frame(out),
+                color: LOOP_COLOR,
+                color_table_index: Some(color_table_index.unwrap_or(0)),
+                active_loop: Some(0),
+                beat_loop_size: Some(0),
+                cue_microsec: Some(0),
+                comment: Some(comment.unwrap_or_default()),
+            },
+        }
+    }
 }
 
 async fn handle_track_cue_add(
@@ -225,6 +278,7 @@ async fn handle_track_cue_add(
         slot,
         comment,
         color,
+        out_msec,
     } = cue;
     let (kind, color) = (kind.as_str(), color.as_deref());
     // Memory cues keep their color in Color, hot cues in ColorTableIndex
@@ -397,6 +451,7 @@ async fn handle_track_cue_add(
         Ok((u,)) => u,
         Err(e) => return db_error(e),
     };
+    let shape = CueShape::new(out_msec, color_value, color_table_index, comment.clone());
     sqlx::query("BEGIN").execute(pool).await.ok();
     let written = sqlx::query(
         "INSERT INTO djmdCue (ID, ContentID, InMsec, InFrame, InMpegFrame, InMpegAbs, \
@@ -404,10 +459,12 @@ async fn handle_track_cue_add(
          ActiveLoop, Comment, BeatLoopSize, CueMicrosec, \
          ContentUUID, UUID, rb_data_status, rb_local_data_status, rb_local_deleted, rb_local_synced, \
          created_at, updated_at) \
-         VALUES (?, ?, ?, ?, 0, 0, -1, 0, 0, 0, ?, ?, ?, NULL, ?, NULL, NULL, ?, ?, 0, 0, 0, 0, ?, ?)"
+         VALUES (?, ?, ?, ?, 0, 0, ?, ?, 0, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, 0, ?, ?)"
     )
     .bind(&new_id).bind(track_id).bind(msec).bind(msec_to_frame(msec))
-    .bind(kind_int).bind(color_value).bind(color_table_index).bind(comment.as_deref().filter(|c| !c.is_empty()))
+    .bind(shape.out_msec).bind(shape.out_frame)
+    .bind(kind_int).bind(shape.color).bind(shape.color_table_index)
+    .bind(shape.active_loop).bind(&shape.comment).bind(shape.beat_loop_size).bind(shape.cue_microsec)
     .bind(&content_uuid).bind(&new_uuid)
     .bind(&now).bind(&now)
     .execute(pool).await;

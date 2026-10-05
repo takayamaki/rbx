@@ -163,6 +163,9 @@ pub(crate) enum TrackCuesAction {
         /// Memory cue color: pink, red, orange, yellow, green, aqua, blue or purple
         #[arg(long)]
         color: Option<String>,
+        /// Loop end in milliseconds (makes the cue a loop)
+        #[arg(long)]
+        out_msec: Option<i64>,
         /// Actually apply the change
         #[arg(long)]
         execute: bool,
