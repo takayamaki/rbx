@@ -1,4 +1,6 @@
-use crate::commands::tracks::cues::{kind_to_slot, HOT_CUE_COLORS, MEMORY_COLORS};
+use crate::commands::tracks::cues::{
+    kind_to_slot, HOT_CUE_COLORS, HOT_CUE_COLOR_NAMES, MEMORY_COLORS,
+};
 use sqlx::FromRow;
 
 #[derive(Debug, FromRow)]
@@ -165,13 +167,15 @@ impl CueRow {
             _ => ("other", None),
         };
         // Memory cues: Color 0-7 as a name (-1 and 255 mean no color).
-        // Hot cues: ColorTableIndex as its position (1-16) in the color menu.
+        // Hot cues: ColorTableIndex as the name of its color in the menu.
         let color = match (kind, self.color, self.color_table_index) {
             ("memory", Some(c @ 0..=7), _) => serde_json::json!(MEMORY_COLORS[c as usize]),
             ("hot", _, Some(index)) => HOT_CUE_COLORS
                 .iter()
                 .position(|&v| v == index)
-                .map_or(serde_json::Value::Null, |i| serde_json::json!(i + 1)),
+                .map_or(serde_json::Value::Null, |i| {
+                    serde_json::json!(HOT_CUE_COLOR_NAMES[i])
+                }),
             _ => serde_json::Value::Null,
         };
         let mut json = serde_json::json!({

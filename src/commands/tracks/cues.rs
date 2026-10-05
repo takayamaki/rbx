@@ -60,13 +60,37 @@ const COLOR_HINT: &str = "use pink, red, orange, yellow, green, aqua, blue or pu
 /// left to right and top to bottom.
 pub(crate) const HOT_CUE_COLORS: [i32; 16] =
     [49, 56, 60, 62, 1, 5, 9, 14, 18, 22, 26, 30, 32, 38, 42, 45];
-const HOT_COLOR_HINT: &str =
-    "use 1-16: the position in rekordbox's hot cue color menu, left to right, top to bottom";
+/// Names for HOT_CUE_COLORS, picked from the colors seen in the menu.
+/// Colors close to a memory cue color share its name (red, blue, ...).
+pub(crate) const HOT_CUE_COLOR_NAMES: [&str; 16] = [
+    "magenta",
+    "purple",
+    "lavender",
+    "periwinkle",
+    "blue",
+    "sky",
+    "aqua",
+    "teal",
+    "emerald",
+    "green",
+    "lime",
+    "olive",
+    "yellow",
+    "orange",
+    "red",
+    "pink",
+];
+const HOT_COLOR_HINT: &str = "use magenta, purple, lavender, periwinkle, blue, sky, aqua, teal, \
+     emerald, green, lime, olive, yellow, orange, red, pink, \
+     or 1-16 for the position in rekordbox's hot cue color menu";
 
-/// Hot cue colors are given as their position (1-16) in rekordbox's color menu.
-fn hot_cue_color(position: &str) -> Option<i32> {
-    let n: usize = position.parse().ok()?;
-    HOT_CUE_COLORS.get(n.checked_sub(1)?).copied()
+/// Hot cue colors are given by name, or by their position (1-16) in rekordbox's color menu.
+fn hot_cue_color(name: &str) -> Option<i32> {
+    let position = match HOT_CUE_COLOR_NAMES.iter().position(|c| *c == name) {
+        Some(i) => i,
+        None => name.parse::<usize>().ok()?.checked_sub(1)?,
+    };
+    HOT_CUE_COLORS.get(position).copied()
 }
 
 /// Memory cue colors are Color 0-7 in rekordbox's menu order.

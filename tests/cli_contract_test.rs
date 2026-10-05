@@ -1489,7 +1489,7 @@ async fn cues_add_hot_cue_slots_d_to_h_use_kind_5_to_9() {
 
 /// `--color pink|red|orange|yellow|green|aqua|blue|purple` sets Color 0-7 on a
 /// memory cue (checked by coloring cues in rekordbox 7). Without it, Color is -1.
-/// Hot cue colors use another palette that is not checked yet, so they are refused.
+/// Names that only exist in the hot cue menu (teal, ...) are refused on memory cues.
 #[tokio::test]
 async fn cues_add_memory_cue_with_color() {
     let (db_path, _dir) = common::setup_db().await;
@@ -1511,9 +1511,15 @@ async fn cues_add_memory_cue_with_color() {
     }
     rbx_cmd(&db_path)
         .args([
-            "tracks", "cues", "add", "101", "4000", "--kind", "hot", "--slot", "1",
+            "tracks",
+            "cues",
+            "add",
+            "101",
+            "4000",
+            "--color",
+            "teal",
+            "--execute",
         ])
-        .args(["--color", "red", "--execute"])
         .assert()
         .code(2);
 
@@ -1903,7 +1909,29 @@ async fn cues_update_hot_cue_color() {
     assert_eq!(entries[0]["ColorTableIndex"], 18);
 }
 
-/// `cues list` reports a hot cue's color as its position in the menu (1-16).
+/// Each menu color also has a name, picked from the color seen in the menu
+/// and matching the memory cue names where the color is close (red, blue, ...).
+#[tokio::test]
+async fn cues_add_hot_cue_color_by_name() {
+    let (db_path, _dir) = common::setup_db().await;
+    for (slot, color) in [("1", "magenta"), ("2", "teal"), ("3", "red")] {
+        rbx_cmd(&db_path)
+            .args(["tracks", "cues", "add", "101", "1000", "--kind", "hot"])
+            .args(["--slot", slot, "--color", color, "--execute"])
+            .assert()
+            .code(0);
+    }
+
+    let pool = common::open_pool(&db_path).await;
+    let indexes: Vec<(i64,)> =
+        sqlx::query_as("SELECT ColorTableIndex FROM djmdCue WHERE ContentID = '101' ORDER BY Kind")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(indexes, vec![(49,), (14,), (42,)]);
+}
+
+/// `cues list` reports a hot cue's color by its name.
 #[tokio::test]
 async fn cues_list_reports_hot_cue_menu_color() {
     let (db_path, _dir) = common::setup_db().await;
@@ -1929,16 +1957,16 @@ async fn cues_list_reports_hot_cue_menu_color() {
     let json = stdout_json(&assert);
     let items = json["items"].as_array().unwrap();
     let colored = items.iter().find(|c| c["slot"] == 1).unwrap();
-    assert_eq!(colored["color"], 12);
+    assert_eq!(colored["color"], "olive");
     let plain = items.iter().find(|c| c["slot"] == 2).unwrap();
     assert_eq!(plain["color"], serde_json::Value::Null);
 }
 
-/// A hot cue color outside 1-16, or a memory cue color name, is a usage error.
+/// A hot cue color outside 1-16, or a name that is not in the menu, is a usage error.
 #[tokio::test]
 async fn cues_hot_cue_color_outside_the_menu_is_a_usage_error() {
     let (db_path, _dir) = common::setup_db().await;
-    for color in ["0", "17", "red", "none"] {
+    for color in ["0", "17", "beige", "none"] {
         let assert = rbx_cmd(&db_path)
             .args([
                 "tracks", "cues", "add", "101", "1000", "--kind", "hot", "--slot", "1",
