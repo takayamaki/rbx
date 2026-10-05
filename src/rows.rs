@@ -1,3 +1,4 @@
+use crate::commands::tracks::cues::{kind_to_slot, MEMORY_COLORS};
 use sqlx::FromRow;
 
 #[derive(Debug, FromRow)]
@@ -148,31 +149,37 @@ pub(crate) struct CueRow {
 }
 
 impl CueRow {
+    pub(crate) fn content_id(&self) -> &str {
+        &self.content_id
+    }
+
+    pub(crate) fn is_memory(&self) -> bool {
+        self.kind == Some(0)
+    }
+
     pub(crate) fn to_json(&self) -> serde_json::Value {
-        let kind_str = match self.kind {
-            Some(0) => "memory",
-            Some(k @ 1..=8) => {
-                return serde_json::json!({
-                    "id": self.id,
-                    "track_id": self.content_id,
-                    "kind": "hot",
-                    "slot": k,
-                    "in_msec": self.in_msec,
-                    "out_msec": self.out_msec.filter(|&v| v >= 0),
-                    "color": self.color.filter(|&v| v >= 0),
-                    "comment": self.comment,
-                })
-            }
-            _ => "other",
+        let (kind, slot) = match self.kind {
+            Some(0) => ("memory", None),
+            Some(k @ (1..=3 | 5..=9)) => ("hot", Some(kind_to_slot(k))),
+            _ => ("other", None),
         };
-        serde_json::json!({
+        // Only memory cue colors (Color 0-7) are known; -1 and 255 mean no color
+        let color = match (kind, self.color) {
+            ("memory", Some(c @ 0..=7)) => Some(MEMORY_COLORS[c as usize]),
+            _ => None,
+        };
+        let mut json = serde_json::json!({
             "id": self.id,
             "track_id": self.content_id,
-            "kind": kind_str,
+            "kind": kind,
             "in_msec": self.in_msec,
             "out_msec": self.out_msec.filter(|&v| v >= 0),
-            "color": self.color.filter(|&v| v >= 0),
+            "color": color,
             "comment": self.comment,
-        })
+        });
+        if let Some(slot) = slot {
+            json["slot"] = slot.into();
+        }
+        json
     }
 }

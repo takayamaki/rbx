@@ -1201,3 +1201,616 @@ async fn playlist_tracks_remove_with_track_ids_and_position_is_a_usage_error() {
 
     assert_eq!(playlist_rows(&pool).await.len(), 3);
 }
+
+// --- tracks cues add / update / delete ---
+// What rekordbox itself writes was checked against a real master.db (rekordbox 7):
+// InFrame is 1/150 s, unused columns are NULL, hot cues D-H are Kind 5-9,
+// every track with cues has one contentCue row holding all its cues as JSON,
+// and djmdContent.CueUpdated goes up on every cue change.
+// Order: the everyday case (add a memory cue) first, then the side tables,
+// hot cues, colors, list, update, delete, and the cases that are refused last.
+
+/// CueMicrosec, ActiveLoop, BeatLoopSize, ColorTableIndex, Comment, rb_local_usn
+type CueNullColumns = (
+    Option<i64>,
+    Option<i64>,
+    Option<i64>,
+    Option<i64>,
+    Option<String>,
+    Option<i64>,
+);
+
+/// ID, UUID, Cues, rb_cue_count, created_at, rb_* status fields
+type ContentCueRow = (String, String, String, i64, String, i64, i64, i64, i64);
+
+/// A memory cue on track 102 as rekordbox wrote it: an older field order
+/// (ContentUUID near the end) and CueMicrosec 0.
+const REKORDBOX_CUE_ENTRY: &str = r#"{"ID":"900","ContentID":"102","InMsec":1000,"InFrame":150,"InMpegFrame":0,"InMpegAbs":0,"OutMsec":-1,"OutFrame":0,"OutMpegFrame":0,"OutMpegAbs":0,"Kind":0,"Color":-1,"ColorTableIndex":0,"ActiveLoop":0,"BeatLoopSize":0,"CueMicrosec":0,"ContentUUID":"c0000000-0000-0000-0000-000000000102","UUID":"q0000000-0000-0000-0000-000000000900","created_at":"2026-01-01T00:00:00.000+00:00","updated_at":"2026-01-01T00:00:00.000+00:00"}"#;
+
+/// Seeds REKORDBOX_CUE_ENTRY as a djmdCue row and a contentCue row.
+async fn seed_rekordbox_cue(pool: &sqlx::SqlitePool) {
+    sqlx::query(
+        "INSERT INTO djmdCue (ID, ContentID, InMsec, InFrame, InMpegFrame, InMpegAbs, \
+         OutMsec, OutFrame, OutMpegFrame, OutMpegAbs, Kind, Color, ColorTableIndex, \
+         ActiveLoop, BeatLoopSize, CueMicrosec, ContentUUID, UUID, created_at, updated_at) \
+         VALUES ('900', '102', 1000, 150, 0, 0, -1, 0, 0, 0, 0, -1, 0, 0, 0, 0, \
+         'c0000000-0000-0000-0000-000000000102', 'q0000000-0000-0000-0000-000000000900', ?, ?)",
+    )
+    .bind(common::SEED_TS)
+    .bind(common::SEED_TS)
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO contentCue (ID, ContentID, Cues, rb_cue_count, UUID, rb_local_usn, created_at, updated_at) \
+         VALUES ('c0000000-0000-0000-0000-000000000102', '102', ?, 1, \
+         'r0000000-0000-0000-0000-000000000102', 10, ?, ?)",
+    )
+    .bind(format!("[{}]", REKORDBOX_CUE_ENTRY))
+    .bind(common::SEED_TS)
+    .bind(common::SEED_TS)
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query("UPDATE djmdContent SET CueUpdated = '3' WHERE ID = '102'")
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
+/// A memory cue gets InFrame = floor(msec * 150 / 1000), OutMsec -1, and NULL
+/// in the columns rekordbox leaves empty (CueMicrosec, ActiveLoop, BeatLoopSize,
+/// ColorTableIndex, Comment). The cue row itself has no USN, like rekordbox's.
+#[tokio::test]
+async fn cues_add_memory_cue_writes_frame_and_leaves_unused_columns_null() {
+    let (db_path, _dir) = common::setup_db().await;
+
+    let assert = rbx_cmd(&db_path)
+        .args(["tracks", "cues", "add", "101", "141013", "--execute"])
+        .assert()
+        .code(0);
+    let json = stdout_json(&assert);
+    assert_eq!(json["kind"], "tracks.cues.add");
+    let cue_id = json["result"]["cue_id"].as_str().unwrap().to_string();
+
+    let pool = common::open_pool(&db_path).await;
+    let row: (i64, i64, i64, i64, i64, i64, i64, i64, i64, i64) = sqlx::query_as(
+        "SELECT InMsec, InFrame, InMpegFrame, InMpegAbs, OutMsec, OutFrame, \
+         OutMpegFrame, OutMpegAbs, Kind, Color FROM djmdCue WHERE ID = ?",
+    )
+    .bind(&cue_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(row, (141013, 21151, 0, 0, -1, 0, 0, 0, 0, -1));
+
+    let nulls: CueNullColumns = sqlx::query_as(
+        "SELECT CueMicrosec, ActiveLoop, BeatLoopSize, ColorTableIndex, Comment, rb_local_usn \
+             FROM djmdCue WHERE ID = ?",
+    )
+    .bind(&cue_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(nulls, (None, None, None, None, None, None));
+
+    let (uuid, content_uuid, created_at): (String, String, String) =
+        sqlx::query_as("SELECT UUID, ContentUUID, created_at FROM djmdCue WHERE ID = ?")
+            .bind(&cue_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(!uuid.is_empty());
+    assert_eq!(content_uuid, "c0000000-0000-0000-0000-000000000101");
+    assert!(
+        ts_regex().is_match(&created_at),
+        "bad timestamp: {}",
+        created_at
+    );
+}
+
+/// The first cue on a track creates its contentCue row: ID is the track UUID,
+/// Cues is a JSON array with the cue (NULL fields left out, ISO timestamps)
+/// and rb_cue_count is 1.
+#[tokio::test]
+async fn cues_add_creates_the_content_cue_row() {
+    let (db_path, _dir) = common::setup_db().await;
+
+    let assert = rbx_cmd(&db_path)
+        .args(["tracks", "cues", "add", "101", "141013", "--execute"])
+        .assert()
+        .code(0);
+    let cue_id = stdout_json(&assert)["result"]["cue_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let pool = common::open_pool(&db_path).await;
+    let (id, uuid, cues, count, created_at, ds, lds, ld, ls): ContentCueRow = sqlx::query_as(
+        "SELECT ID, UUID, Cues, rb_cue_count, created_at, \
+         rb_data_status, rb_local_data_status, rb_local_deleted, rb_local_synced \
+         FROM contentCue WHERE ContentID = '101'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        id, "c0000000-0000-0000-0000-000000000101",
+        "ID is the track UUID"
+    );
+    assert!(!uuid.is_empty());
+    assert_ne!(uuid, id);
+    assert_eq!(count, 1);
+    assert!(
+        ts_regex().is_match(&created_at),
+        "bad timestamp: {}",
+        created_at
+    );
+    assert_eq!((ds, lds, ld, ls), (0, 0, 0, 0));
+
+    // Same keys, in the same order, as the entries rekordbox writes for a plain cue
+    let keys = [
+        "ID",
+        "ContentID",
+        "ContentUUID",
+        "InMsec",
+        "InFrame",
+        "InMpegFrame",
+        "InMpegAbs",
+        "OutMsec",
+        "OutFrame",
+        "OutMpegFrame",
+        "OutMpegAbs",
+        "Kind",
+        "Color",
+        "UUID",
+        "created_at",
+        "updated_at",
+    ];
+    let key_re = regex::Regex::new(r#""([A-Za-z_]+)":"#).unwrap();
+    let found: Vec<&str> = key_re
+        .captures_iter(&cues)
+        .map(|c| c.get(1).unwrap().as_str())
+        .collect();
+    assert_eq!(found, keys);
+
+    let entries: serde_json::Value = serde_json::from_str(&cues).unwrap();
+    let entry = &entries[0];
+    assert_eq!(entry["ID"], cue_id.as_str());
+    assert_eq!(entry["ContentID"], "101");
+    assert_eq!(entry["InMsec"], 141013);
+    assert_eq!(entry["InFrame"], 21151);
+    assert_eq!(entry["OutMsec"], -1);
+    assert_eq!(entry["Kind"], 0);
+    assert_eq!(entry["Color"], -1);
+    let iso = regex::Regex::new(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}\+00:00$").unwrap();
+    assert!(
+        iso.is_match(entry["created_at"].as_str().unwrap()),
+        "{}",
+        entry["created_at"]
+    );
+}
+
+/// A cue on a track that already has cues is appended to its contentCue JSON.
+/// The entries rekordbox wrote are kept byte for byte.
+#[tokio::test]
+async fn cues_add_appends_to_content_cue_and_keeps_other_entries_as_they_are() {
+    let (db_path, _dir) = common::setup_db().await;
+    let pool = common::open_pool(&db_path).await;
+    seed_rekordbox_cue(&pool).await;
+
+    rbx_cmd(&db_path)
+        .args(["tracks", "cues", "add", "102", "30000", "--execute"])
+        .assert()
+        .code(0);
+
+    let (cues, count): (String, i64) =
+        sqlx::query_as("SELECT Cues, rb_cue_count FROM contentCue WHERE ContentID = '102'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(count, 2);
+    assert!(
+        cues.starts_with(&format!("[{},", REKORDBOX_CUE_ENTRY)),
+        "first entry changed: {}",
+        cues
+    );
+    let entries: serde_json::Value = serde_json::from_str(&cues).unwrap();
+    assert_eq!(entries[1]["InMsec"], 30000);
+}
+
+/// Adding a cue bumps djmdContent.CueUpdated by one and gives contentCue and
+/// djmdContent new USNs, in that order, within the agentRegistry counter.
+#[tokio::test]
+async fn cues_add_bumps_cue_updated_and_usns() {
+    let (db_path, _dir) = common::setup_db().await;
+    let pool = common::open_pool(&db_path).await;
+    seed_rekordbox_cue(&pool).await;
+
+    rbx_cmd(&db_path)
+        .args(["tracks", "cues", "add", "102", "30000", "--execute"])
+        .assert()
+        .code(0);
+
+    let (cue_updated, track_usn, track_updated_at): (String, i64, String) = sqlx::query_as(
+        "SELECT CueUpdated, rb_local_usn, updated_at FROM djmdContent WHERE ID = '102'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(cue_updated, "4");
+    assert_ne!(track_updated_at, common::SEED_TS);
+    assert!(
+        ts_regex().is_match(&track_updated_at),
+        "bad timestamp: {}",
+        track_updated_at
+    );
+
+    let (content_cue_usn,): (i64,) =
+        sqlx::query_as("SELECT rb_local_usn FROM contentCue WHERE ContentID = '102'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        (content_cue_usn, track_usn),
+        (1001, 1002),
+        "contentCue first"
+    );
+
+    let (counter,): (i64,) =
+        sqlx::query_as("SELECT int_1 FROM agentRegistry WHERE registry_id = 'localUpdateCount'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(counter, 1002);
+}
+
+/// Hot cue slots A-C are Kind 1-3 and D-H are Kind 5-9 (Kind 4 is not a slot).
+#[tokio::test]
+async fn cues_add_hot_cue_slots_d_to_h_use_kind_5_to_9() {
+    let (db_path, _dir) = common::setup_db().await;
+
+    for (slot, msec) in [("1", "1000"), ("3", "3000"), ("4", "4000"), ("8", "8000")] {
+        rbx_cmd(&db_path)
+            .args(["tracks", "cues", "add", "101", msec, "--kind", "hot"])
+            .args(["--slot", slot, "--execute"])
+            .assert()
+            .code(0);
+    }
+
+    let pool = common::open_pool(&db_path).await;
+    let kinds: Vec<(i64, i64)> =
+        sqlx::query_as("SELECT InMsec, Kind FROM djmdCue WHERE ContentID = '101' ORDER BY InMsec")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(kinds, vec![(1000, 1), (3000, 3), (4000, 5), (8000, 9)]);
+}
+
+/// `--color pink|red|orange|yellow|green|aqua|blue|purple` sets Color 0-7 on a
+/// memory cue (checked by coloring cues in rekordbox 7). Without it, Color is -1.
+/// Hot cue colors use another palette that is not checked yet, so they are refused.
+#[tokio::test]
+async fn cues_add_memory_cue_with_color() {
+    let (db_path, _dir) = common::setup_db().await;
+
+    for (color, msec) in [("pink", "1000"), ("aqua", "2000"), ("purple", "3000")] {
+        rbx_cmd(&db_path)
+            .args([
+                "tracks",
+                "cues",
+                "add",
+                "101",
+                msec,
+                "--color",
+                color,
+                "--execute",
+            ])
+            .assert()
+            .code(0);
+    }
+    rbx_cmd(&db_path)
+        .args([
+            "tracks", "cues", "add", "101", "4000", "--kind", "hot", "--slot", "1",
+        ])
+        .args(["--color", "red", "--execute"])
+        .assert()
+        .code(2);
+
+    let pool = common::open_pool(&db_path).await;
+    let colors: Vec<(i64, i64)> =
+        sqlx::query_as("SELECT InMsec, Color FROM djmdCue WHERE ContentID = '101' ORDER BY InMsec")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(colors, vec![(1000, 0), (2000, 5), (3000, 7)]);
+
+    let (cues,): (String,) = sqlx::query_as("SELECT Cues FROM contentCue WHERE ContentID = '101'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let entries: serde_json::Value = serde_json::from_str(&cues).unwrap();
+    assert_eq!(entries[2]["Color"], 7);
+}
+
+/// `cues list` turns Kind back into the hot cue slot and Color into its name.
+#[tokio::test]
+async fn cues_list_reports_slot_and_color_name() {
+    let (db_path, _dir) = common::setup_db().await;
+    rbx_cmd(&db_path)
+        .args([
+            "tracks",
+            "cues",
+            "add",
+            "101",
+            "1000",
+            "--color",
+            "green",
+            "--execute",
+        ])
+        .assert()
+        .code(0);
+    rbx_cmd(&db_path)
+        .args([
+            "tracks", "cues", "add", "101", "2000", "--kind", "hot", "--slot", "4",
+        ])
+        .arg("--execute")
+        .assert()
+        .code(0);
+
+    let assert = rbx_cmd(&db_path)
+        .args(["tracks", "cues", "list", "101"])
+        .assert()
+        .code(0);
+    let json = stdout_json(&assert);
+    let items = json["items"].as_array().unwrap();
+    let memory = items.iter().find(|c| c["in_msec"] == 1000).unwrap();
+    assert_eq!(memory["kind"], "memory");
+    assert_eq!(memory["color"], "green");
+    let hot = items.iter().find(|c| c["in_msec"] == 2000).unwrap();
+    assert_eq!(hot["kind"], "hot");
+    assert_eq!(hot["slot"], 4);
+}
+
+/// `cues update --msec` moves the cue, recomputes InFrame, and updates the
+/// cue's entry in contentCue, CueUpdated and the USNs.
+#[tokio::test]
+async fn cues_update_msec_recomputes_frame_and_syncs_content_cue() {
+    let (db_path, _dir) = common::setup_db().await;
+    let pool = common::open_pool(&db_path).await;
+    seed_rekordbox_cue(&pool).await;
+
+    rbx_cmd(&db_path)
+        .args([
+            "tracks",
+            "cues",
+            "update",
+            "900",
+            "--msec",
+            "5000",
+            "--execute",
+        ])
+        .assert()
+        .code(0);
+
+    let (in_msec, in_frame, updated_at): (i64, i64, String) =
+        sqlx::query_as("SELECT InMsec, InFrame, updated_at FROM djmdCue WHERE ID = '900'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!((in_msec, in_frame), (5000, 750));
+    assert!(
+        ts_regex().is_match(&updated_at),
+        "bad timestamp: {}",
+        updated_at
+    );
+
+    let (cues, count): (String, i64) =
+        sqlx::query_as("SELECT Cues, rb_cue_count FROM contentCue WHERE ContentID = '102'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(count, 1);
+    let entries: serde_json::Value = serde_json::from_str(&cues).unwrap();
+    assert_eq!(entries[0]["InMsec"], 5000);
+    assert_eq!(entries[0]["InFrame"], 750);
+
+    let (cue_updated,): (String,) =
+        sqlx::query_as("SELECT CueUpdated FROM djmdContent WHERE ID = '102'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(cue_updated, "4");
+}
+
+/// `cues update --color` changes the color of the same row (same ID).
+/// `--color none` writes 255, as rekordbox does when a color is cleared.
+#[tokio::test]
+async fn cues_update_color_changes_the_row_in_place() {
+    let (db_path, _dir) = common::setup_db().await;
+    let pool = common::open_pool(&db_path).await;
+    seed_rekordbox_cue(&pool).await;
+
+    for (color, expected) in [("blue", 6), ("none", 255)] {
+        rbx_cmd(&db_path)
+            .args([
+                "tracks",
+                "cues",
+                "update",
+                "900",
+                "--color",
+                color,
+                "--execute",
+            ])
+            .assert()
+            .code(0);
+        let (value,): (i64,) = sqlx::query_as("SELECT Color FROM djmdCue WHERE ID = '900'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(value, expected, "--color {}", color);
+    }
+
+    let (cues,): (String,) = sqlx::query_as("SELECT Cues FROM contentCue WHERE ContentID = '102'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let entries: serde_json::Value = serde_json::from_str(&cues).unwrap();
+    assert_eq!(entries[0]["ID"], "900");
+    assert_eq!(entries[0]["Color"], 255);
+}
+
+/// `cues delete` removes the row (rekordbox keeps no soft-deleted cues) and
+/// its entry in contentCue.
+#[tokio::test]
+async fn cues_delete_removes_the_row_and_its_content_cue_entry() {
+    let (db_path, _dir) = common::setup_db().await;
+    let pool = common::open_pool(&db_path).await;
+    seed_rekordbox_cue(&pool).await;
+    rbx_cmd(&db_path)
+        .args(["tracks", "cues", "add", "102", "30000", "--execute"])
+        .assert()
+        .code(0);
+
+    rbx_cmd(&db_path)
+        .args(["tracks", "cues", "delete", "900", "--execute"])
+        .assert()
+        .code(0);
+
+    let (rows,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM djmdCue WHERE ID = '900'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(rows, 0, "the row is removed, not soft-deleted");
+
+    let (cues, count): (String, i64) =
+        sqlx::query_as("SELECT Cues, rb_cue_count FROM contentCue WHERE ContentID = '102'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(count, 1);
+    let entries: serde_json::Value = serde_json::from_str(&cues).unwrap();
+    assert_eq!(entries[0]["InMsec"], 30000);
+
+    let (cue_updated,): (String,) =
+        sqlx::query_as("SELECT CueUpdated FROM djmdContent WHERE ID = '102'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(cue_updated, "5", "3 seeded + add + delete");
+}
+
+/// Deleting the last cue of a track removes its contentCue row
+/// (rekordbox has no contentCue rows with zero cues).
+#[tokio::test]
+async fn cues_delete_last_cue_removes_the_content_cue_row() {
+    let (db_path, _dir) = common::setup_db().await;
+    let pool = common::open_pool(&db_path).await;
+    seed_rekordbox_cue(&pool).await;
+
+    rbx_cmd(&db_path)
+        .args(["tracks", "cues", "delete", "900", "--execute"])
+        .assert()
+        .code(0);
+
+    let (rows,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM contentCue WHERE ContentID = '102'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(rows, 0);
+    let (cue_updated,): (String,) =
+        sqlx::query_as("SELECT CueUpdated FROM djmdContent WHERE ID = '102'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(cue_updated, "4");
+}
+
+/// rekordbox allows at most 10 memory cues per track. An 11th is a conflict.
+#[tokio::test]
+async fn cues_add_eleventh_memory_cue_is_a_conflict() {
+    let (db_path, _dir) = common::setup_db().await;
+    for i in 1..=10 {
+        rbx_cmd(&db_path)
+            .args([
+                "tracks",
+                "cues",
+                "add",
+                "101",
+                &(i * 1000).to_string(),
+                "--execute",
+            ])
+            .assert()
+            .code(0);
+    }
+
+    let assert = rbx_cmd(&db_path)
+        .args(["tracks", "cues", "add", "101", "11000", "--execute"])
+        .assert()
+        .code(5);
+    assert_eq!(stdout_json(&assert)["error"]["category"], "conflict");
+
+    let pool = common::open_pool(&db_path).await;
+    let (rows,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM djmdCue WHERE ContentID = '101'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(rows, 10);
+}
+
+/// mp3 (VBR needs MPEG frame offsets) and FLAC (needs seek info) are refused,
+/// because rbx cannot compute those fields yet. Moving a cue (update --msec) is
+/// refused for the same reason; changing its color or deleting it is fine.
+#[tokio::test]
+async fn cues_add_refuses_mp3_and_flac() {
+    let (db_path, _dir) = common::setup_db().await;
+    let pool = common::open_pool(&db_path).await;
+    seed_rekordbox_cue(&pool).await;
+    // rekordbox FileType: 1 = mp3, 5 = FLAC
+    sqlx::query("UPDATE djmdContent SET FileType = 1 WHERE ID = '102'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE djmdContent SET FileType = 5 WHERE ID = '101'")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    for track in ["101", "102"] {
+        let assert = rbx_cmd(&db_path)
+            .args(["tracks", "cues", "add", track, "30000", "--execute"])
+            .assert()
+            .code(2);
+        assert_eq!(stdout_json(&assert)["error"]["category"], "usage");
+    }
+    rbx_cmd(&db_path)
+        .args([
+            "tracks",
+            "cues",
+            "update",
+            "900",
+            "--msec",
+            "5000",
+            "--execute",
+        ])
+        .assert()
+        .code(2);
+    rbx_cmd(&db_path)
+        .args([
+            "tracks",
+            "cues",
+            "update",
+            "900",
+            "--color",
+            "red",
+            "--execute",
+        ])
+        .assert()
+        .code(0);
+
+    let positions: Vec<(i64,)> = sqlx::query_as("SELECT InMsec FROM djmdCue")
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+    assert_eq!(positions, vec![(1000,)]);
+}

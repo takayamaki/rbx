@@ -118,12 +118,22 @@ rbx tracks bulk-update - < updates.json
 ```sh
 rbx tracks cues list <track_id>        # MEMORY/HOT CUE 一覧
 rbx tracks cues add <track_id> 12345   # MEMORY CUE 追加（dry-run）
+rbx tracks cues add <track_id> 12345 --color green
+                                       # 緑の MEMORY CUE 追加（dry-run）
 rbx tracks cues add <track_id> 92000 --kind hot --slot 1 --comment 'Drop'
-                                       # HOT CUE をスロット1に追加（dry-run）
+                                       # HOT CUE をスロット1（= A。1〜8 が A〜H）に追加（dry-run）
 rbx tracks cues update <cue_id> --msec 15000 --comment 'Verse'
                                        # CUE の位置・コメント変更（dry-run）
+rbx tracks cues update <cue_id> --color none
+                                       # MEMORY CUE の色を外す（dry-run）
 rbx tracks cues delete <cue_id>        # CUE 削除（dry-run）
 ```
+
+CUE は rekordbox と同じ形で書く。
+djmdCue の行に加えて、曲ごとの `contentCue`（その曲の全 CUE の JSON）と `djmdContent.CueUpdated` も更新する。
+未対応:
+HOT CUE の色、ループ、
+mp3 / FLAC への CUE の配置（rekordbox はファイル内のオフセットも持つため）。
 
 ### tracks mytags（トラックへのタグ付け外し）
 

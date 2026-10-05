@@ -53,7 +53,8 @@ async fn create_schema(pool: &SqlitePool) {
              ID TEXT PRIMARY KEY, Title TEXT, ArtistID TEXT, KeyID TEXT, \
              Length INTEGER, BPM INTEGER, FolderPath TEXT, FileNameL TEXT, FileNameS TEXT, \
              Rating INTEGER, ColorID TEXT, Commnt TEXT, \
-             GenreID TEXT, AlbumID TEXT, TrackNo INTEGER, DiscNo INTEGER, ReleaseYear INTEGER, {})",
+             GenreID TEXT, AlbumID TEXT, TrackNo INTEGER, DiscNo INTEGER, ReleaseYear INTEGER, \
+             FileType INTEGER, CueUpdated TEXT, {})",
             RB_COLUMNS
         ),
         format!(
@@ -102,6 +103,11 @@ async fn create_schema(pool: &SqlitePool) {
              ColorTableIndex INTEGER, ActiveLoop INTEGER, Comment TEXT, \
              BeatLoopSize INTEGER, CueMicrosec INTEGER, InPointSeekInfo TEXT, \
              OutPointSeekInfo TEXT, ContentUUID TEXT, {})",
+            RB_COLUMNS
+        ),
+        format!(
+            "CREATE TABLE contentCue (\
+             ID TEXT PRIMARY KEY, ContentID TEXT, Cues TEXT, rb_cue_count INTEGER, {})",
             RB_COLUMNS
         ),
         format!(

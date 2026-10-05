@@ -15,7 +15,7 @@ Tests are the only guard against that class of bug.
 
 | File | What it guards |
 |---|---|
-| `common/mod.rs` | Fixture builder. Creates an unencrypted SQLite db with the rekordbox-shaped schema (11 tables, seeded agentRegistry / content / artist / key / mytags / playlist). `db.rs` falls back to unencrypted, so tests need no SQLCipher key. |
+| `common/mod.rs` | Fixture builder. Creates an unencrypted SQLite db with the rekordbox-shaped schema (14 tables, seeded agentRegistry / content / artist / genre / key / mytags / playlist). `db.rs` falls back to unencrypted, so tests need no SQLCipher key. |
 | `invariants_test.rs` | Native-format invariants: timestamp format `%Y-%m-%d %H:%M:%S%.3f +00:00`, numeric 28-bit IDs (>= 100), USN allocation from `agentRegistry.localUpdateCount` (rows never exceed the counter). |
 | `playlist_xml_test.rs` | `masterPlaylists6.xml` editing: NODE lines are added/removed without touching any other byte of the file; `Id` matching is exact (not fooled by `ParentId`). |
 | `cli_contract_test.rs` | The agent-facing contract, tested through the real binary (`assert_cmd`): JSON envelope shape, semantic exit codes, dry-run defaults, full column set on INSERT, read-only `query` allowlist. |

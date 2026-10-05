@@ -1,4 +1,4 @@
-use rbx::helpers::{allocate_usns, generate_numeric_id, now_datetime};
+use rbx::helpers::{generate_numeric_id, now_datetime};
 use rbx::output;
 use sqlx::sqlite::SqlitePool;
 use uuid::Uuid;
@@ -6,6 +6,88 @@ use uuid::Uuid;
 use crate::cli::TrackCuesAction;
 use crate::commands::{db_error, resolve_track_summary};
 use crate::rows::CueRow;
+
+use super::content_cue;
+
+/// rekordbox stores cue positions in frames of 1/150 s, rounded down.
+fn msec_to_frame(msec: i64) -> i64 {
+    msec * 150 / 1000
+}
+
+/// Refuses to place a cue on a file type whose extra position fields rbx cannot compute:
+/// VBR mp3 needs InMpegFrame / InMpegAbs, FLAC needs InPointSeekInfo.
+async fn check_position_format(
+    pool: &SqlitePool,
+    track_id: &str,
+) -> Result<Option<(serde_json::Value, i32)>, sqlx::Error> {
+    let (file_type,) =
+        sqlx::query_as::<_, (Option<i64>,)>("SELECT FileType FROM djmdContent WHERE ID = ?")
+            .bind(track_id)
+            .fetch_one(pool)
+            .await?;
+    let format = match file_type {
+        Some(1) => "mp3",
+        Some(5) => "FLAC",
+        _ => return Ok(None),
+    };
+    Ok(Some((
+        output::error(
+            "usage",
+            output::EXIT_USAGE,
+            &format!(
+                "Cannot place cues on {} files yet: rekordbox also stores a position in the file \
+                 (MPEG frame offsets for VBR mp3, seek info for FLAC) that rbx does not compute",
+                format
+            ),
+            Some("Set this cue in rekordbox"),
+        ),
+        output::EXIT_USAGE,
+    )))
+}
+
+/// rekordbox allows at most this many memory cues on one track.
+const MAX_MEMORY_CUES: i64 = 10;
+/// Color of a cue that never had one.
+const NO_COLOR: i32 = -1;
+/// Color rekordbox writes when the user clears a cue's color.
+const CLEARED_COLOR: i32 = 255;
+pub(crate) const MEMORY_COLORS: [&str; 8] = [
+    "pink", "red", "orange", "yellow", "green", "aqua", "blue", "purple",
+];
+const COLOR_HINT: &str = "use pink, red, orange, yellow, green, aqua, blue or purple";
+
+/// Memory cue colors are Color 0-7 in rekordbox's menu order.
+fn memory_color(name: &str) -> Option<i32> {
+    MEMORY_COLORS
+        .iter()
+        .position(|c| *c == name)
+        .map(|i| i as i32)
+}
+
+fn usage_error(message: &str) -> (serde_json::Value, i32) {
+    (
+        output::error("usage", output::EXIT_USAGE, message, None),
+        output::EXIT_USAGE,
+    )
+}
+
+/// Hot cue slots A-C are Kind 1-3 and D-H are Kind 5-9: rekordbox skips Kind 4.
+pub(crate) fn slot_to_kind(slot: i32) -> i32 {
+    if slot <= 3 {
+        slot
+    } else {
+        slot + 1
+    }
+}
+
+/// The reverse of `slot_to_kind`.
+pub(crate) fn kind_to_slot(kind: i32) -> i32 {
+    if kind <= 3 {
+        kind
+    } else {
+        kind - 1
+    }
+}
 
 pub(crate) async fn handle_track_cues(
     pool: &SqlitePool,
@@ -55,29 +137,64 @@ pub(crate) async fn handle_track_cues(
             kind,
             slot,
             comment,
+            color,
             execute,
-        } => handle_track_cue_add(pool, &track_id, msec, &kind, slot, comment, execute).await,
+        } => {
+            let cue = NewCue {
+                msec,
+                kind,
+                slot,
+                comment,
+                color,
+            };
+            handle_track_cue_add(pool, &track_id, cue, execute).await
+        }
         TrackCuesAction::Update {
             cue_id,
             msec,
             comment,
+            color,
             execute,
-        } => handle_track_cue_update(pool, &cue_id, msec, comment, execute).await,
+        } => handle_track_cue_update(pool, &cue_id, msec, comment, color, execute).await,
         TrackCuesAction::Delete { cue_id, execute } => {
             handle_track_cue_delete(pool, &cue_id, execute).await
         }
     }
 }
 
+/// The flags of `cues add`.
+struct NewCue {
+    msec: i64,
+    kind: String,
+    slot: Option<i32>,
+    comment: Option<String>,
+    color: Option<String>,
+}
+
 async fn handle_track_cue_add(
     pool: &SqlitePool,
     track_id: &str,
-    msec: i64,
-    kind: &str,
-    slot: Option<i32>,
-    comment: Option<String>,
+    cue: NewCue,
     execute: bool,
 ) -> (serde_json::Value, i32) {
+    let NewCue {
+        msec,
+        kind,
+        slot,
+        comment,
+        color,
+    } = cue;
+    let (kind, color) = (kind.as_str(), color.as_deref());
+    let color_value = match color {
+        None => NO_COLOR,
+        Some(_) if kind != "memory" => {
+            return usage_error("--color is only supported on memory cues for now")
+        }
+        Some(name) => match memory_color(name) {
+            Some(v) => v,
+            None => return usage_error(&format!("Unknown color: {} ({})", name, COLOR_HINT)),
+        },
+    };
     let (title, artist) = match resolve_track_summary(pool, track_id).await {
         Ok(Some(t)) => t,
         Ok(None) => {
@@ -94,10 +211,16 @@ async fn handle_track_cue_add(
         Err(e) => return db_error(e),
     };
 
+    match check_position_format(pool, track_id).await {
+        Ok(Some(refused)) => return refused,
+        Ok(None) => {}
+        Err(e) => return db_error(e),
+    }
+
     let kind_int = match kind {
         "memory" => 0,
         "hot" => match slot {
-            Some(s) if (1..=8).contains(&s) => s,
+            Some(s) if (1..=8).contains(&s) => slot_to_kind(s),
             Some(s) => {
                 return (
                     output::error(
@@ -150,7 +273,8 @@ async fn handle_track_cue_add(
                     output::EXIT_CONFLICT,
                     &format!(
                         "Hot cue slot {} is already occupied on '{}'",
-                        kind_int, title
+                        slot.unwrap_or_default(),
+                        title
                     ),
                     Some(&format!(
                         "Use 'rbx tracks cues list {}' to see existing cues",
@@ -159,6 +283,36 @@ async fn handle_track_cue_add(
                 ),
                 output::EXIT_CONFLICT,
             );
+        }
+    }
+
+    if kind_int == 0 {
+        let count = sqlx::query_as::<_, (i64,)>(
+            "SELECT COUNT(*) FROM djmdCue WHERE ContentID = ? AND Kind = 0 AND rb_local_deleted = 0",
+        )
+        .bind(track_id)
+        .fetch_one(pool)
+        .await;
+        match count {
+            Ok((n,)) if n >= MAX_MEMORY_CUES => {
+                return (
+                    output::error(
+                        "conflict",
+                        output::EXIT_CONFLICT,
+                        &format!(
+                            "'{}' already has {} memory cues, the most rekordbox allows",
+                            title, n
+                        ),
+                        Some(&format!(
+                            "Use 'rbx tracks cues list {}' and delete one first",
+                            track_id
+                        )),
+                    ),
+                    output::EXIT_CONFLICT,
+                )
+            }
+            Ok(_) => {}
+            Err(e) => return db_error(e),
         }
     }
 
@@ -184,10 +338,6 @@ async fn handle_track_cue_add(
     };
     let new_uuid = Uuid::new_v4().to_string();
     let now = now_datetime();
-    let usn = match allocate_usns(pool, 1).await {
-        Ok(v) => v,
-        Err(e) => return db_error(e),
-    };
     let content_uuid: String = match sqlx::query_as::<_, (String,)>(
         "SELECT COALESCE(UUID, '') FROM djmdContent WHERE ID = ?",
     )
@@ -198,32 +348,46 @@ async fn handle_track_cue_add(
         Ok((u,)) => u,
         Err(e) => return db_error(e),
     };
-    match sqlx::query(
+    sqlx::query("BEGIN").execute(pool).await.ok();
+    let written = sqlx::query(
         "INSERT INTO djmdCue (ID, ContentID, InMsec, InFrame, InMpegFrame, InMpegAbs, \
          OutMsec, OutFrame, OutMpegFrame, OutMpegAbs, Kind, Color, ColorTableIndex, \
          ActiveLoop, Comment, BeatLoopSize, CueMicrosec, \
-         ContentUUID, UUID, rb_data_status, rb_local_data_status, rb_local_deleted, rb_local_synced, rb_local_usn, \
+         ContentUUID, UUID, rb_data_status, rb_local_data_status, rb_local_deleted, rb_local_synced, \
          created_at, updated_at) \
-         VALUES (?, ?, ?, 0, 0, 0, -1, 0, 0, 0, ?, -1, 0, 0, ?, 0, ?, ?, ?, 0, 0, 0, 0, ?, ?, ?)"
+         VALUES (?, ?, ?, ?, 0, 0, -1, 0, 0, 0, ?, ?, NULL, NULL, ?, NULL, NULL, ?, ?, 0, 0, 0, 0, ?, ?)"
     )
-    .bind(&new_id).bind(track_id).bind(msec)
-    .bind(kind_int).bind(comment.as_deref().unwrap_or(""))
-    .bind(msec * 1000) // CueMicrosec = msec * 1000
-    .bind(&content_uuid).bind(&new_uuid).bind(usn)
+    .bind(&new_id).bind(track_id).bind(msec).bind(msec_to_frame(msec))
+    .bind(kind_int).bind(color_value).bind(comment.as_deref().filter(|c| !c.is_empty()))
+    .bind(&content_uuid).bind(&new_uuid)
     .bind(&now).bind(&now)
-    .execute(pool).await {
-        Ok(_) => (
-            output::mutation_done("tracks.cues.add", serde_json::json!({
-                "cue_id": new_id,
-                "track": { "id": track_id, "title": title, "artist": artist },
-                "kind": kind,
-                "slot": slot,
-                "in_msec": msec,
-                "comment": comment,
-            })),
-            output::EXIT_OK,
-        ),
-        Err(e) => db_error(e),
+    .execute(pool).await;
+    let written = match written {
+        Ok(_) => content_cue::sync(pool, track_id, &[new_id.as_str()], &now).await,
+        Err(e) => Err(e),
+    };
+    match written {
+        Ok(_) => {
+            sqlx::query("COMMIT").execute(pool).await.ok();
+            (
+                output::mutation_done(
+                    "tracks.cues.add",
+                    serde_json::json!({
+                        "cue_id": new_id,
+                        "track": { "id": track_id, "title": title, "artist": artist },
+                        "kind": kind,
+                        "slot": slot,
+                        "in_msec": msec,
+                        "comment": comment,
+                    }),
+                ),
+                output::EXIT_OK,
+            )
+        }
+        Err(e) => {
+            sqlx::query("ROLLBACK").execute(pool).await.ok();
+            db_error(e)
+        }
     }
 }
 
@@ -232,6 +396,7 @@ async fn handle_track_cue_update(
     cue_id: &str,
     msec: Option<i64>,
     comment: Option<String>,
+    color: Option<String>,
     execute: bool,
 ) -> (serde_json::Value, i32) {
     let cue = match sqlx::query_as::<_, CueRow>(
@@ -258,17 +423,40 @@ async fn handle_track_cue_update(
         Err(e) => return db_error(e),
     };
 
-    if msec.is_none() && comment.is_none() {
+    if msec.is_none() && comment.is_none() && color.is_none() {
         return (
             output::error(
                 "usage",
                 output::EXIT_USAGE,
                 "No fields specified to update",
-                Some("Use --msec or --comment"),
+                Some("Use --msec, --comment or --color"),
             ),
             output::EXIT_USAGE,
         );
     }
+    if msec.is_some() {
+        match check_position_format(pool, cue.content_id()).await {
+            Ok(Some(refused)) => return refused,
+            Ok(None) => {}
+            Err(e) => return db_error(e),
+        }
+    }
+    let color_value = match color.as_deref() {
+        None => None,
+        Some(_) if !cue.is_memory() => {
+            return usage_error("--color is only supported on memory cues for now")
+        }
+        Some("none") => Some(CLEARED_COLOR),
+        Some(name) => match memory_color(name) {
+            Some(v) => Some(v),
+            None => {
+                return usage_error(&format!(
+                    "Unknown color: {} ({}, or none)",
+                    name, COLOR_HINT
+                ))
+            }
+        },
+    };
 
     let mut changes = serde_json::Map::new();
     if let Some(v) = msec {
@@ -276,6 +464,9 @@ async fn handle_track_cue_update(
     }
     if let Some(ref v) = comment {
         changes.insert("comment".into(), serde_json::json!(v));
+    }
+    if let Some(ref v) = color {
+        changes.insert("color".into(), serde_json::json!(v));
     }
 
     let plan = serde_json::json!({
@@ -292,25 +483,17 @@ async fn handle_track_cue_update(
     }
 
     let now = now_datetime();
-    if let Some(v) = msec {
-        let _ = sqlx::query(
-            "UPDATE djmdCue SET InMsec = ?, CueMicrosec = ?, updated_at = ? WHERE ID = ?",
-        )
-        .bind(v)
-        .bind(v * 1000)
-        .bind(&now)
-        .bind(cue_id)
-        .execute(pool)
-        .await;
+    sqlx::query("BEGIN").execute(pool).await.ok();
+    let written = update_cue_row(pool, cue_id, msec, comment.as_deref(), color_value, &now).await;
+    let written = match written {
+        Ok(_) => content_cue::sync(pool, cue.content_id(), &[cue_id], &now).await,
+        Err(e) => Err(e),
+    };
+    if let Err(e) = written {
+        sqlx::query("ROLLBACK").execute(pool).await.ok();
+        return db_error(e);
     }
-    if let Some(ref v) = comment {
-        let _ = sqlx::query("UPDATE djmdCue SET Comment = ?, updated_at = ? WHERE ID = ?")
-            .bind(v)
-            .bind(&now)
-            .bind(cue_id)
-            .execute(pool)
-            .await;
-    }
+    sqlx::query("COMMIT").execute(pool).await.ok();
 
     (
         output::mutation_done(
@@ -322,6 +505,45 @@ async fn handle_track_cue_update(
         ),
         output::EXIT_OK,
     )
+}
+
+/// Changes the cue row in place, as rekordbox does (same ID).
+async fn update_cue_row(
+    pool: &SqlitePool,
+    cue_id: &str,
+    msec: Option<i64>,
+    comment: Option<&str>,
+    color: Option<i32>,
+    now: &str,
+) -> Result<(), sqlx::Error> {
+    if let Some(v) = color {
+        sqlx::query("UPDATE djmdCue SET Color = ? WHERE ID = ?")
+            .bind(v)
+            .bind(cue_id)
+            .execute(pool)
+            .await?;
+    }
+    if let Some(v) = msec {
+        sqlx::query("UPDATE djmdCue SET InMsec = ?, InFrame = ? WHERE ID = ?")
+            .bind(v)
+            .bind(msec_to_frame(v))
+            .bind(cue_id)
+            .execute(pool)
+            .await?;
+    }
+    if let Some(v) = comment {
+        sqlx::query("UPDATE djmdCue SET Comment = ? WHERE ID = ?")
+            .bind(Some(v).filter(|c| !c.is_empty()))
+            .bind(cue_id)
+            .execute(pool)
+            .await?;
+    }
+    sqlx::query("UPDATE djmdCue SET updated_at = ? WHERE ID = ?")
+        .bind(now)
+        .bind(cue_id)
+        .execute(pool)
+        .await?;
+    Ok(())
 }
 
 async fn handle_track_cue_delete(
@@ -365,23 +587,34 @@ async fn handle_track_cue_delete(
         );
     }
 
+    // rekordbox removes cue rows; a real master.db has no soft-deleted cues
     let now = now_datetime();
-    match sqlx::query("UPDATE djmdCue SET rb_local_deleted = 1, updated_at = ? WHERE ID = ?")
-        .bind(&now)
+    sqlx::query("BEGIN").execute(pool).await.ok();
+    let written = sqlx::query("DELETE FROM djmdCue WHERE ID = ?")
         .bind(cue_id)
         .execute(pool)
-        .await
-    {
-        Ok(_) => (
-            output::mutation_done(
-                "tracks.cues.delete",
-                serde_json::json!({
-                    "cue": cue.to_json(),
-                }),
-            ),
-            output::EXIT_OK,
-        ),
-        Err(e) => db_error(e),
+        .await;
+    let written = match written {
+        Ok(_) => content_cue::sync(pool, cue.content_id(), &[cue_id], &now).await,
+        Err(e) => Err(e),
+    };
+    match written {
+        Ok(_) => {
+            sqlx::query("COMMIT").execute(pool).await.ok();
+            (
+                output::mutation_done(
+                    "tracks.cues.delete",
+                    serde_json::json!({
+                        "cue": cue.to_json(),
+                    }),
+                ),
+                output::EXIT_OK,
+            )
+        }
+        Err(e) => {
+            sqlx::query("ROLLBACK").execute(pool).await.ok();
+            db_error(e)
+        }
     }
 }
 
@@ -414,9 +647,15 @@ pub(crate) fn describe(action: &str) -> Option<serde_json::Value> {
                     "--slot",
                     "integer",
                     false,
-                    "Hot cue slot (1-8, required for hot cues)",
+                    "Hot cue slot 1-8 (A-H), required for hot cues",
                 ),
                 flag("--comment", "string", false, "Cue comment/name"),
+                flag(
+                    "--color",
+                    "string",
+                    false,
+                    "Memory cue color: pink, red, orange, yellow, green, aqua, blue or purple. Not supported on hot cues yet",
+                ),
                 flag(
                     "--execute",
                     "bool",
@@ -427,6 +666,7 @@ pub(crate) fn describe(action: &str) -> Option<serde_json::Value> {
             &mutation_result_schema("tracks.cues.add"),
             &[
                 "rbx tracks cues add TRACK_ID 12345",
+                "rbx tracks cues add TRACK_ID 12345 --color green",
                 "rbx tracks cues add TRACK_ID 12345 --kind hot --slot 1 --comment 'Drop' --execute",
             ],
         ),
@@ -437,6 +677,12 @@ pub(crate) fn describe(action: &str) -> Option<serde_json::Value> {
                 flag("--msec", "integer", false, "New position in milliseconds"),
                 flag("--comment", "string", false, "New comment"),
                 flag(
+                    "--color",
+                    "string",
+                    false,
+                    "Memory cue color: pink, red, orange, yellow, green, aqua, blue, purple, or none",
+                ),
+                flag(
                     "--execute",
                     "bool",
                     false,
@@ -446,7 +692,7 @@ pub(crate) fn describe(action: &str) -> Option<serde_json::Value> {
             &mutation_result_schema("tracks.cues.update"),
             &[
                 "rbx tracks cues update CUE_ID --msec 15000 --comment 'Verse'",
-                "rbx tracks cues update CUE_ID --comment 'Chorus' --execute",
+                "rbx tracks cues update CUE_ID --color none --execute",
             ],
         ),
         "cues delete" => describe_command(
@@ -477,10 +723,14 @@ fn cue_schema() -> serde_json::Value {
             "id": { "type": "string" },
             "track_id": { "type": "string" },
             "kind": { "type": "string", "enum": ["memory", "hot", "other"] },
-            "slot": { "type": "integer|null", "description": "Hot cue slot (1-8), null for memory cues" },
+            "slot": { "type": "integer", "description": "Hot cue slot 1-8 (A-H). Only on hot cues" },
             "in_msec": { "type": "integer|null", "description": "Cue position in milliseconds" },
             "out_msec": { "type": "integer|null", "description": "Loop end in milliseconds, null if not a loop" },
-            "color": { "type": "integer|null" },
+            "color": {
+                "type": "string|null",
+                "enum": ["pink", "red", "orange", "yellow", "green", "aqua", "blue", "purple", null],
+                "description": "Memory cue color. null for no color and for hot cues (their palette is not supported yet)",
+            },
             "comment": { "type": "string|null" },
         },
     })

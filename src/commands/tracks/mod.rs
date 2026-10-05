@@ -1,3 +1,4 @@
+pub(crate) mod content_cue;
 pub(crate) mod cues;
 pub(crate) mod mytags;
 pub(crate) mod update;
