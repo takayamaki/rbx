@@ -1905,7 +1905,34 @@ async fn cues_update_hot_cue_color() {
 
 /// `cues list` reports a hot cue's color as its position in the menu (1-16).
 #[tokio::test]
-async fn cues_list_reports_hot_cue_menu_color() {}
+async fn cues_list_reports_hot_cue_menu_color() {
+    let (db_path, _dir) = common::setup_db().await;
+    rbx_cmd(&db_path)
+        .args([
+            "tracks", "cues", "add", "101", "1000", "--kind", "hot", "--slot", "1",
+        ])
+        .args(["--color", "12", "--execute"])
+        .assert()
+        .code(0);
+    rbx_cmd(&db_path)
+        .args([
+            "tracks", "cues", "add", "101", "2000", "--kind", "hot", "--slot", "2",
+        ])
+        .arg("--execute")
+        .assert()
+        .code(0);
+
+    let assert = rbx_cmd(&db_path)
+        .args(["tracks", "cues", "list", "101"])
+        .assert()
+        .code(0);
+    let json = stdout_json(&assert);
+    let items = json["items"].as_array().unwrap();
+    let colored = items.iter().find(|c| c["slot"] == 1).unwrap();
+    assert_eq!(colored["color"], 12);
+    let plain = items.iter().find(|c| c["slot"] == 2).unwrap();
+    assert_eq!(plain["color"], serde_json::Value::Null);
+}
 
 /// A hot cue color outside 1-16, or a memory cue color name, is a usage error.
 #[tokio::test]

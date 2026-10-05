@@ -126,7 +126,7 @@ pub(crate) async fn handle_track_cues(
             }
             match sqlx::query_as::<_, CueRow>(
                 "SELECT ID as id, ContentID as content_id, InMsec as in_msec, \
-                 OutMsec as out_msec, Kind as kind, Color as color, Comment as comment \
+                 OutMsec as out_msec, Kind as kind, Color as color, ColorTableIndex as color_table_index, Comment as comment \
                  FROM djmdCue WHERE ContentID = ? AND rb_local_deleted = 0 \
                  ORDER BY Kind, InMsec",
             )
@@ -421,7 +421,7 @@ async fn handle_track_cue_update(
 ) -> (serde_json::Value, i32) {
     let cue = match sqlx::query_as::<_, CueRow>(
         "SELECT ID as id, ContentID as content_id, InMsec as in_msec, \
-         OutMsec as out_msec, Kind as kind, Color as color, Comment as comment \
+         OutMsec as out_msec, Kind as kind, Color as color, ColorTableIndex as color_table_index, Comment as comment \
          FROM djmdCue WHERE ID = ? AND rb_local_deleted = 0",
     )
     .bind(cue_id)
@@ -588,7 +588,7 @@ async fn handle_track_cue_delete(
 ) -> (serde_json::Value, i32) {
     let cue = match sqlx::query_as::<_, CueRow>(
         "SELECT ID as id, ContentID as content_id, InMsec as in_msec, \
-         OutMsec as out_msec, Kind as kind, Color as color, Comment as comment \
+         OutMsec as out_msec, Kind as kind, Color as color, ColorTableIndex as color_table_index, Comment as comment \
          FROM djmdCue WHERE ID = ? AND rb_local_deleted = 0",
     )
     .bind(cue_id)
