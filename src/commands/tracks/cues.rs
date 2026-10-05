@@ -384,25 +384,17 @@ async fn handle_track_cue_update(
     }
 
     let now = now_datetime();
-    if let Some(v) = msec {
-        let _ = sqlx::query(
-            "UPDATE djmdCue SET InMsec = ?, CueMicrosec = ?, updated_at = ? WHERE ID = ?",
-        )
-        .bind(v)
-        .bind(v * 1000)
-        .bind(&now)
-        .bind(cue_id)
-        .execute(pool)
-        .await;
+    sqlx::query("BEGIN").execute(pool).await.ok();
+    let written = update_cue_row(pool, cue_id, msec, comment.as_deref(), &now).await;
+    let written = match written {
+        Ok(_) => content_cue::sync(pool, cue.content_id(), &[cue_id], &now).await,
+        Err(e) => Err(e),
+    };
+    if let Err(e) = written {
+        sqlx::query("ROLLBACK").execute(pool).await.ok();
+        return db_error(e);
     }
-    if let Some(ref v) = comment {
-        let _ = sqlx::query("UPDATE djmdCue SET Comment = ?, updated_at = ? WHERE ID = ?")
-            .bind(v)
-            .bind(&now)
-            .bind(cue_id)
-            .execute(pool)
-            .await;
-    }
+    sqlx::query("COMMIT").execute(pool).await.ok();
 
     (
         output::mutation_done(
@@ -414,6 +406,37 @@ async fn handle_track_cue_update(
         ),
         output::EXIT_OK,
     )
+}
+
+/// Changes the cue row in place, as rekordbox does (same ID).
+async fn update_cue_row(
+    pool: &SqlitePool,
+    cue_id: &str,
+    msec: Option<i64>,
+    comment: Option<&str>,
+    now: &str,
+) -> Result<(), sqlx::Error> {
+    if let Some(v) = msec {
+        sqlx::query("UPDATE djmdCue SET InMsec = ?, InFrame = ? WHERE ID = ?")
+            .bind(v)
+            .bind(msec_to_frame(v))
+            .bind(cue_id)
+            .execute(pool)
+            .await?;
+    }
+    if let Some(v) = comment {
+        sqlx::query("UPDATE djmdCue SET Comment = ? WHERE ID = ?")
+            .bind(Some(v).filter(|c| !c.is_empty()))
+            .bind(cue_id)
+            .execute(pool)
+            .await?;
+    }
+    sqlx::query("UPDATE djmdCue SET updated_at = ? WHERE ID = ?")
+        .bind(now)
+        .bind(cue_id)
+        .execute(pool)
+        .await?;
+    Ok(())
 }
 
 async fn handle_track_cue_delete(

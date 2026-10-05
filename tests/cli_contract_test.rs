@@ -1575,7 +1575,53 @@ async fn cues_list_reports_slot_and_color_name() {
 /// `cues update --msec` moves the cue, recomputes InFrame, and updates the
 /// cue's entry in contentCue, CueUpdated and the USNs.
 #[tokio::test]
-async fn cues_update_msec_recomputes_frame_and_syncs_content_cue() {}
+async fn cues_update_msec_recomputes_frame_and_syncs_content_cue() {
+    let (db_path, _dir) = common::setup_db().await;
+    let pool = common::open_pool(&db_path).await;
+    seed_rekordbox_cue(&pool).await;
+
+    rbx_cmd(&db_path)
+        .args([
+            "tracks",
+            "cues",
+            "update",
+            "900",
+            "--msec",
+            "5000",
+            "--execute",
+        ])
+        .assert()
+        .code(0);
+
+    let (in_msec, in_frame, updated_at): (i64, i64, String) =
+        sqlx::query_as("SELECT InMsec, InFrame, updated_at FROM djmdCue WHERE ID = '900'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!((in_msec, in_frame), (5000, 750));
+    assert!(
+        ts_regex().is_match(&updated_at),
+        "bad timestamp: {}",
+        updated_at
+    );
+
+    let (cues, count): (String, i64) =
+        sqlx::query_as("SELECT Cues, rb_cue_count FROM contentCue WHERE ContentID = '102'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(count, 1);
+    let entries: serde_json::Value = serde_json::from_str(&cues).unwrap();
+    assert_eq!(entries[0]["InMsec"], 5000);
+    assert_eq!(entries[0]["InFrame"], 750);
+
+    let (cue_updated,): (String,) =
+        sqlx::query_as("SELECT CueUpdated FROM djmdContent WHERE ID = '102'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(cue_updated, "4");
+}
 
 /// `cues update --color` changes the color of the same row (same ID).
 /// `--color none` writes 255, as rekordbox does when a color is cleared.
