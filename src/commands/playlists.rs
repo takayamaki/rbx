@@ -96,8 +96,9 @@ async fn handle_playlist_tracks(
         PlaylistTracksAction::Remove {
             playlist_id,
             track_ids,
+            position,
             execute,
-        } => handle_playlist_track_remove(pool, &playlist_id, &track_ids, execute).await,
+        } => handle_playlist_track_remove(pool, &playlist_id, &track_ids, position, execute).await,
     }
 }
 
@@ -275,6 +276,7 @@ async fn handle_playlist_track_remove(
     pool: &SqlitePool,
     playlist_id: &str,
     track_ids: &[String],
+    position: Option<i32>,
     execute: bool,
 ) -> (serde_json::Value, i32) {
     let pl_name = match resolve_playlist_name(pool, playlist_id).await {
@@ -294,6 +296,30 @@ async fn handle_playlist_track_remove(
     };
 
     let mut targets = Vec::new();
+    if let Some(pos) = position {
+        match sqlx::query_as::<_, (String, String)>(
+            "SELECT ID, ContentID FROM djmdSongPlaylist WHERE PlaylistID = ? AND TrackNo = ?",
+        )
+        .bind(playlist_id)
+        .bind(pos)
+        .fetch_optional(pool)
+        .await
+        {
+            Ok(Some((row_id, tid))) => targets.push((tid, row_id, pos)),
+            Ok(None) => {
+                return (
+                    output::error(
+                        "usage",
+                        output::EXIT_USAGE,
+                        &format!("Playlist '{}' has no track at position {}", pl_name, pos),
+                        Some("Use 'rbx playlists tracks list <playlist_id>' to see track numbers"),
+                    ),
+                    output::EXIT_USAGE,
+                )
+            }
+            Err(e) => return db_error(e),
+        }
+    }
     for tid in track_ids {
         let (title, _) = match resolve_track_summary(pool, tid).await {
             Ok(Some(t)) => t,
@@ -338,7 +364,7 @@ async fn handle_playlist_track_remove(
     let plan = serde_json::json!({
         "action": "remove_tracks_from_playlist",
         "playlist": { "id": playlist_id, "name": pl_name },
-        "track_ids": track_ids,
+        "track_ids": targets.iter().map(|(tid, _, _)| tid).collect::<Vec<_>>(),
         "count": targets.len(),
     });
 

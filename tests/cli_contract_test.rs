@@ -1118,7 +1118,31 @@ async fn playlist_tracks_add_at_out_of_range_position_is_a_usage_error() {
 /// `remove --position N` removes only the N-th row, even when the same track
 /// is in the playlist twice, and renumbers the rest.
 #[tokio::test]
-async fn playlist_tracks_remove_at_position_removes_only_that_row() {}
+async fn playlist_tracks_remove_at_position_removes_only_that_row() {
+    let (db_path, _dir) = common::setup_db().await;
+    let pool = common::open_pool(&db_path).await;
+    seed_playlist(&pool, &["101", "102", "101", "103"]).await;
+
+    let assert = rbx_cmd(&db_path)
+        .args(["playlists", "tracks", "remove", "501"])
+        .args(["--position", "3", "--execute"])
+        .assert()
+        .code(0);
+    let json = stdout_json(&assert);
+    assert_eq!(json["kind"], "playlists.tracks.remove");
+    assert_eq!(json["result"]["removed_count"], 1);
+
+    assert_eq!(
+        playlist_rows(&pool).await,
+        rows(&[(1, "101"), (2, "102"), (3, "103")])
+    );
+    let (first_row_id,): (String,) =
+        sqlx::query_as("SELECT ID FROM djmdSongPlaylist WHERE PlaylistID = '501' AND TrackNo = 1")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(first_row_id, "sp1", "the first 101 must stay");
+}
 
 /// Without --execute nothing is written. The plan names the track at that
 /// position so the caller can check it before applying.
