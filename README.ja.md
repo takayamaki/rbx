@@ -120,15 +120,37 @@ rbx tracks cues list <track_id>        # MEMORY/HOT CUE 一覧
 rbx tracks cues add <track_id> 12345   # MEMORY CUE 追加（dry-run）
 rbx tracks cues add <track_id> 12345 --color green
                                        # 緑の MEMORY CUE 追加（dry-run）
-rbx tracks cues add <track_id> 92000 --kind hot --slot 1 --color 9 --comment 'Drop'
-                                       # HOT CUE をスロット1（= A。1〜8 が A〜H）に、HOT CUE の色メニューの
-                                       # 9 番目の色（1〜16、左から右・上の段から）で追加（dry-run）
+rbx tracks cues add <track_id> 92000 --kind hot --slot 1 --color red --comment 'Drop'
+                                       # 赤い HOT CUE をスロット1（= A。1〜8 が A〜H）に追加（dry-run）
 rbx tracks cues update <cue_id> --msec 15000 --comment 'Verse'
                                        # CUE の位置・コメント変更（dry-run）
 rbx tracks cues update <cue_id> --color none
                                        # MEMORY CUE の色を外す（dry-run）
 rbx tracks cues delete <cue_id>        # CUE 削除（dry-run）
 ```
+
+HOT CUE の色は、rekordbox の HOT CUE の色メニューの 16 色（左から右・上の段から）。名前か番号で指定する:
+
+| # | 名前 | 会話での呼び方 | メニューの色 | ColorTableIndex |
+|---|---|---|---|---|
+| 1 | magenta | マゼンタ | #DE44CF | 49 |
+| 2 | purple | 紫 | #B432FF | 56 |
+| 3 | lavender | ラベンダー | #AA72FF | 60 |
+| 4 | periwinkle | 青紫 | #6473FF | 62 |
+| 5 | blue | 青 | #305AFF | 1 |
+| 6 | sky | 空色 | #50B4FF | 5 |
+| 7 | aqua | 水色 | #00E0FF | 9 |
+| 8 | teal | 青緑 | #1FA392 | 14 |
+| 9 | emerald | エメラルド | #10B176 | 18 |
+| 10 | green | 緑 | #28E214 | 22 |
+| 11 | lime | 黄緑 | #A5E116 | 26 |
+| 12 | olive | オリーブ | #B4BE04 | 30 |
+| 13 | yellow | 黄 | #C3AF04 | 32 |
+| 14 | orange | 橙 | #E0641B | 38 |
+| 15 | red | 赤 | #E62828 | 42 |
+| 16 | pink | ピンク | #FF127B | 45 |
+
+MEMORY CUE の色は pink（桃）・red（赤）・orange（橙）・yellow（黄）・green（緑）・aqua（水）・blue（青）・purple（紫）（Color 0〜7）。
 
 CUE は rekordbox と同じ形で書く。
 djmdCue の行に加えて、曲ごとの `contentCue`（その曲の全 CUE の JSON）と `djmdContent.CueUpdated` も更新する。
