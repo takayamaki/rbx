@@ -1488,9 +1488,50 @@ async fn cues_add_hot_cue_slots_d_to_h_use_kind_5_to_9() {
 }
 
 /// `--color pink|red|orange|yellow|green|aqua|blue|purple` sets Color 0-7 on a
-/// memory cue. Without it, Color is -1 (no color).
+/// memory cue (checked by coloring cues in rekordbox 7). Without it, Color is -1.
+/// Hot cue colors use another palette that is not checked yet, so they are refused.
 #[tokio::test]
-async fn cues_add_memory_cue_with_color() {}
+async fn cues_add_memory_cue_with_color() {
+    let (db_path, _dir) = common::setup_db().await;
+
+    for (color, msec) in [("pink", "1000"), ("aqua", "2000"), ("purple", "3000")] {
+        rbx_cmd(&db_path)
+            .args([
+                "tracks",
+                "cues",
+                "add",
+                "101",
+                msec,
+                "--color",
+                color,
+                "--execute",
+            ])
+            .assert()
+            .code(0);
+    }
+    rbx_cmd(&db_path)
+        .args([
+            "tracks", "cues", "add", "101", "4000", "--kind", "hot", "--slot", "1",
+        ])
+        .args(["--color", "red", "--execute"])
+        .assert()
+        .code(2);
+
+    let pool = common::open_pool(&db_path).await;
+    let colors: Vec<(i64, i64)> =
+        sqlx::query_as("SELECT InMsec, Color FROM djmdCue WHERE ContentID = '101' ORDER BY InMsec")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(colors, vec![(1000, 0), (2000, 5), (3000, 7)]);
+
+    let (cues,): (String,) = sqlx::query_as("SELECT Cues FROM contentCue WHERE ContentID = '101'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let entries: serde_json::Value = serde_json::from_str(&cues).unwrap();
+    assert_eq!(entries[2]["Color"], 7);
+}
 
 /// `cues list` turns Kind back into the hot cue slot and Color into its name.
 #[tokio::test]

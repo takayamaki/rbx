@@ -14,6 +14,28 @@ fn msec_to_frame(msec: i64) -> i64 {
     msec * 150 / 1000
 }
 
+/// Color of a cue that never had one.
+const NO_COLOR: i32 = -1;
+const MEMORY_COLORS: [&str; 8] = [
+    "pink", "red", "orange", "yellow", "green", "aqua", "blue", "purple",
+];
+const COLOR_HINT: &str = "use pink, red, orange, yellow, green, aqua, blue or purple";
+
+/// Memory cue colors are Color 0-7 in rekordbox's menu order.
+fn memory_color(name: &str) -> Option<i32> {
+    MEMORY_COLORS
+        .iter()
+        .position(|c| *c == name)
+        .map(|i| i as i32)
+}
+
+fn usage_error(message: &str) -> (serde_json::Value, i32) {
+    (
+        output::error("usage", output::EXIT_USAGE, message, None),
+        output::EXIT_USAGE,
+    )
+}
+
 /// Hot cue slots A-C are Kind 1-3 and D-H are Kind 5-9: rekordbox skips Kind 4.
 pub(crate) fn slot_to_kind(slot: i32) -> i32 {
     if slot <= 3 {
@@ -71,8 +93,18 @@ pub(crate) async fn handle_track_cues(
             kind,
             slot,
             comment,
+            color,
             execute,
-        } => handle_track_cue_add(pool, &track_id, msec, &kind, slot, comment, execute).await,
+        } => {
+            let cue = NewCue {
+                msec,
+                kind,
+                slot,
+                comment,
+                color,
+            };
+            handle_track_cue_add(pool, &track_id, cue, execute).await
+        }
         TrackCuesAction::Update {
             cue_id,
             msec,
@@ -85,15 +117,39 @@ pub(crate) async fn handle_track_cues(
     }
 }
 
+/// The flags of `cues add`.
+struct NewCue {
+    msec: i64,
+    kind: String,
+    slot: Option<i32>,
+    comment: Option<String>,
+    color: Option<String>,
+}
+
 async fn handle_track_cue_add(
     pool: &SqlitePool,
     track_id: &str,
-    msec: i64,
-    kind: &str,
-    slot: Option<i32>,
-    comment: Option<String>,
+    cue: NewCue,
     execute: bool,
 ) -> (serde_json::Value, i32) {
+    let NewCue {
+        msec,
+        kind,
+        slot,
+        comment,
+        color,
+    } = cue;
+    let (kind, color) = (kind.as_str(), color.as_deref());
+    let color_value = match color {
+        None => NO_COLOR,
+        Some(_) if kind != "memory" => {
+            return usage_error("--color is only supported on memory cues for now")
+        }
+        Some(name) => match memory_color(name) {
+            Some(v) => v,
+            None => return usage_error(&format!("Unknown color: {} ({})", name, COLOR_HINT)),
+        },
+    };
     let (title, artist) = match resolve_track_summary(pool, track_id).await {
         Ok(Some(t)) => t,
         Ok(None) => {
@@ -218,10 +274,10 @@ async fn handle_track_cue_add(
          ActiveLoop, Comment, BeatLoopSize, CueMicrosec, \
          ContentUUID, UUID, rb_data_status, rb_local_data_status, rb_local_deleted, rb_local_synced, \
          created_at, updated_at) \
-         VALUES (?, ?, ?, ?, 0, 0, -1, 0, 0, 0, ?, -1, NULL, NULL, ?, NULL, NULL, ?, ?, 0, 0, 0, 0, ?, ?)"
+         VALUES (?, ?, ?, ?, 0, 0, -1, 0, 0, 0, ?, ?, NULL, NULL, ?, NULL, NULL, ?, ?, 0, 0, 0, 0, ?, ?)"
     )
     .bind(&new_id).bind(track_id).bind(msec).bind(msec_to_frame(msec))
-    .bind(kind_int).bind(comment.as_deref().filter(|c| !c.is_empty()))
+    .bind(kind_int).bind(color_value).bind(comment.as_deref().filter(|c| !c.is_empty()))
     .bind(&content_uuid).bind(&new_uuid)
     .bind(&now).bind(&now)
     .execute(pool).await;
