@@ -1759,6 +1759,58 @@ async fn cues_add_eleventh_memory_cue_is_a_conflict() {
 }
 
 /// mp3 (VBR needs MPEG frame offsets) and FLAC (needs seek info) are refused,
-/// because rbx cannot compute those fields yet.
+/// because rbx cannot compute those fields yet. Moving a cue (update --msec) is
+/// refused for the same reason; changing its color or deleting it is fine.
 #[tokio::test]
-async fn cues_add_refuses_mp3_and_flac() {}
+async fn cues_add_refuses_mp3_and_flac() {
+    let (db_path, _dir) = common::setup_db().await;
+    let pool = common::open_pool(&db_path).await;
+    seed_rekordbox_cue(&pool).await;
+    // rekordbox FileType: 1 = mp3, 5 = FLAC
+    sqlx::query("UPDATE djmdContent SET FileType = 1 WHERE ID = '102'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE djmdContent SET FileType = 5 WHERE ID = '101'")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    for track in ["101", "102"] {
+        let assert = rbx_cmd(&db_path)
+            .args(["tracks", "cues", "add", track, "30000", "--execute"])
+            .assert()
+            .code(2);
+        assert_eq!(stdout_json(&assert)["error"]["category"], "usage");
+    }
+    rbx_cmd(&db_path)
+        .args([
+            "tracks",
+            "cues",
+            "update",
+            "900",
+            "--msec",
+            "5000",
+            "--execute",
+        ])
+        .assert()
+        .code(2);
+    rbx_cmd(&db_path)
+        .args([
+            "tracks",
+            "cues",
+            "update",
+            "900",
+            "--color",
+            "red",
+            "--execute",
+        ])
+        .assert()
+        .code(0);
+
+    let positions: Vec<(i64,)> = sqlx::query_as("SELECT InMsec FROM djmdCue")
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+    assert_eq!(positions, vec![(1000,)]);
+}

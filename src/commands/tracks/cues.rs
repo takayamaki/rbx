@@ -14,6 +14,37 @@ fn msec_to_frame(msec: i64) -> i64 {
     msec * 150 / 1000
 }
 
+/// Refuses to place a cue on a file type whose extra position fields rbx cannot compute:
+/// VBR mp3 needs InMpegFrame / InMpegAbs, FLAC needs InPointSeekInfo.
+async fn check_position_format(
+    pool: &SqlitePool,
+    track_id: &str,
+) -> Result<Option<(serde_json::Value, i32)>, sqlx::Error> {
+    let (file_type,) =
+        sqlx::query_as::<_, (Option<i64>,)>("SELECT FileType FROM djmdContent WHERE ID = ?")
+            .bind(track_id)
+            .fetch_one(pool)
+            .await?;
+    let format = match file_type {
+        Some(1) => "mp3",
+        Some(5) => "FLAC",
+        _ => return Ok(None),
+    };
+    Ok(Some((
+        output::error(
+            "usage",
+            output::EXIT_USAGE,
+            &format!(
+                "Cannot place cues on {} files yet: rekordbox also stores a position in the file \
+                 (MPEG frame offsets for VBR mp3, seek info for FLAC) that rbx does not compute",
+                format
+            ),
+            Some("Set this cue in rekordbox"),
+        ),
+        output::EXIT_USAGE,
+    )))
+}
+
 /// rekordbox allows at most this many memory cues on one track.
 const MAX_MEMORY_CUES: i64 = 10;
 /// Color of a cue that never had one.
@@ -179,6 +210,12 @@ async fn handle_track_cue_add(
         }
         Err(e) => return db_error(e),
     };
+
+    match check_position_format(pool, track_id).await {
+        Ok(Some(refused)) => return refused,
+        Ok(None) => {}
+        Err(e) => return db_error(e),
+    }
 
     let kind_int = match kind {
         "memory" => 0,
@@ -396,6 +433,13 @@ async fn handle_track_cue_update(
             ),
             output::EXIT_USAGE,
         );
+    }
+    if msec.is_some() {
+        match check_position_format(pool, cue.content_id()).await {
+            Ok(Some(refused)) => return refused,
+            Ok(None) => {}
+            Err(e) => return db_error(e),
+        }
     }
     let color_value = match color.as_deref() {
         None => None,
