@@ -1703,7 +1703,28 @@ async fn cues_delete_removes_the_row_and_its_content_cue_entry() {
 /// Deleting the last cue of a track removes its contentCue row
 /// (rekordbox has no contentCue rows with zero cues).
 #[tokio::test]
-async fn cues_delete_last_cue_removes_the_content_cue_row() {}
+async fn cues_delete_last_cue_removes_the_content_cue_row() {
+    let (db_path, _dir) = common::setup_db().await;
+    let pool = common::open_pool(&db_path).await;
+    seed_rekordbox_cue(&pool).await;
+
+    rbx_cmd(&db_path)
+        .args(["tracks", "cues", "delete", "900", "--execute"])
+        .assert()
+        .code(0);
+
+    let (rows,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM contentCue WHERE ContentID = '102'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(rows, 0);
+    let (cue_updated,): (String,) =
+        sqlx::query_as("SELECT CueUpdated FROM djmdContent WHERE ID = '102'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(cue_updated, "4");
+}
 
 /// rekordbox allows at most 10 memory cues per track. An 11th is a conflict.
 #[tokio::test]
