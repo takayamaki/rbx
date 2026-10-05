@@ -133,10 +133,10 @@ HOT CUE の色は、rekordbox の HOT CUE の色メニューの 16 色（左か�
 
 | # | 名前 | 会話での呼び方 | メニューの色 | ColorTableIndex |
 |---|---|---|---|---|
-| 1 | magenta | マゼンタ | #DE44CF | 49 |
+| 1 | violet | バイオレット | #DE44CF | 49 |
 | 2 | purple | 紫 | #B432FF | 56 |
 | 3 | lavender | ラベンダー | #AA72FF | 60 |
-| 4 | periwinkle | 青紫 | #6473FF | 62 |
+| 4 | slateblue | スレートブルー | #6473FF | 62 |
 | 5 | blue | 青 | #305AFF | 1 |
 | 6 | sky | 空色 | #50B4FF | 5 |
 | 7 | aqua | 水色 | #00E0FF | 9 |

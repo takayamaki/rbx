@@ -147,10 +147,10 @@ Pass a name or the position:
 
 | # | Name | Seen in the menu | ColorTableIndex |
 |---|---|---|---|
-| 1 | magenta | #DE44CF | 49 |
+| 1 | violet | #DE44CF | 49 |
 | 2 | purple | #B432FF | 56 |
 | 3 | lavender | #AA72FF | 60 |
-| 4 | periwinkle | #6473FF | 62 |
+| 4 | slateblue | #6473FF | 62 |
 | 5 | blue | #305AFF | 1 |
 | 6 | sky | #50B4FF | 5 |
 | 7 | aqua | #00E0FF | 9 |

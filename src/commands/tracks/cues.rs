@@ -65,10 +65,10 @@ pub(crate) const HOT_CUE_COLORS: [i32; 16] =
 /// Names for HOT_CUE_COLORS, picked from the colors seen in the menu.
 /// Colors close to a memory cue color share its name (red, blue, ...).
 pub(crate) const HOT_CUE_COLOR_NAMES: [&str; 16] = [
-    "magenta",
+    "violet",
     "purple",
     "lavender",
-    "periwinkle",
+    "slateblue",
     "blue",
     "sky",
     "aqua",
@@ -82,7 +82,7 @@ pub(crate) const HOT_CUE_COLOR_NAMES: [&str; 16] = [
     "red",
     "pink",
 ];
-const HOT_COLOR_HINT: &str = "use magenta, purple, lavender, periwinkle, blue, sky, aqua, teal, \
+const HOT_COLOR_HINT: &str = "use violet, purple, lavender, slateblue, blue, sky, aqua, teal, \
      emerald, green, lime, olive, yellow, orange, red, pink, \
      or 1-16 for the position in rekordbox's hot cue color menu";
 
@@ -716,7 +716,7 @@ pub(crate) fn describe(action: &str) -> Option<serde_json::Value> {
                     "--color",
                     "string",
                     false,
-                    "Memory cue: pink, red, orange, yellow, green, aqua, blue or purple. Hot cue: magenta, purple, lavender, periwinkle, blue, sky, aqua, teal, emerald, green, lime, olive, yellow, orange, red, pink, or 1-16 (position in rekordbox's hot cue color menu, left to right, top to bottom)",
+                    "Memory cue: pink, red, orange, yellow, green, aqua, blue or purple. Hot cue: violet, purple, lavender, slateblue, blue, sky, aqua, teal, emerald, green, lime, olive, yellow, orange, red, pink, or 1-16 (position in rekordbox's hot cue color menu, left to right, top to bottom)",
                 ),
                 flag(
                     "--execute",
@@ -790,7 +790,7 @@ fn cue_schema() -> serde_json::Value {
             "out_msec": { "type": "integer|null", "description": "Loop end in milliseconds, null if not a loop" },
             "color": {
                 "type": "string|null",
-                "description": "Color name (memory cue: pink, red, orange, yellow, green, aqua, blue, purple; hot cue: magenta, purple, lavender, periwinkle, blue, sky, aqua, teal, emerald, green, lime, olive, yellow, orange, red, pink). null for no color",
+                "description": "Color name (memory cue: pink, red, orange, yellow, green, aqua, blue, purple; hot cue: violet, purple, lavender, slateblue, blue, sky, aqua, teal, emerald, green, lime, olive, yellow, orange, red, pink). null for no color",
             },
             "comment": { "type": "string|null" },
         },
