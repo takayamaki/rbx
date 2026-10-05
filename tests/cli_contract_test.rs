@@ -1535,7 +1535,42 @@ async fn cues_add_memory_cue_with_color() {
 
 /// `cues list` turns Kind back into the hot cue slot and Color into its name.
 #[tokio::test]
-async fn cues_list_reports_slot_and_color_name() {}
+async fn cues_list_reports_slot_and_color_name() {
+    let (db_path, _dir) = common::setup_db().await;
+    rbx_cmd(&db_path)
+        .args([
+            "tracks",
+            "cues",
+            "add",
+            "101",
+            "1000",
+            "--color",
+            "green",
+            "--execute",
+        ])
+        .assert()
+        .code(0);
+    rbx_cmd(&db_path)
+        .args([
+            "tracks", "cues", "add", "101", "2000", "--kind", "hot", "--slot", "4",
+        ])
+        .arg("--execute")
+        .assert()
+        .code(0);
+
+    let assert = rbx_cmd(&db_path)
+        .args(["tracks", "cues", "list", "101"])
+        .assert()
+        .code(0);
+    let json = stdout_json(&assert);
+    let items = json["items"].as_array().unwrap();
+    let memory = items.iter().find(|c| c["in_msec"] == 1000).unwrap();
+    assert_eq!(memory["kind"], "memory");
+    assert_eq!(memory["color"], "green");
+    let hot = items.iter().find(|c| c["in_msec"] == 2000).unwrap();
+    assert_eq!(hot["kind"], "hot");
+    assert_eq!(hot["slot"], 4);
+}
 
 /// `cues update --msec` moves the cue, recomputes InFrame, and updates the
 /// cue's entry in contentCue, CueUpdated and the USNs.

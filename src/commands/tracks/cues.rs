@@ -16,7 +16,7 @@ fn msec_to_frame(msec: i64) -> i64 {
 
 /// Color of a cue that never had one.
 const NO_COLOR: i32 = -1;
-const MEMORY_COLORS: [&str; 8] = [
+pub(crate) const MEMORY_COLORS: [&str; 8] = [
     "pink", "red", "orange", "yellow", "green", "aqua", "blue", "purple",
 ];
 const COLOR_HINT: &str = "use pink, red, orange, yellow, green, aqua, blue or purple";
@@ -42,6 +42,15 @@ pub(crate) fn slot_to_kind(slot: i32) -> i32 {
         slot
     } else {
         slot + 1
+    }
+}
+
+/// The reverse of `slot_to_kind`.
+pub(crate) fn kind_to_slot(kind: i32) -> i32 {
+    if kind <= 3 {
+        kind
+    } else {
+        kind - 1
     }
 }
 
