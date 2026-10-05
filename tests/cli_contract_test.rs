@@ -2148,7 +2148,36 @@ async fn cues_add_loop_with_beats_sets_beat_loop_size() {
 
 /// A hot cue loop keeps its slot Kind; `--color` sets its ColorTableIndex.
 #[tokio::test]
-async fn cues_add_hot_cue_loop() {}
+async fn cues_add_hot_cue_loop() {
+    let (db_path, _dir) = common::setup_db().await;
+    rbx_cmd(&db_path)
+        .args([
+            "tracks", "cues", "add", "101", "1000", "--kind", "hot", "--slot", "4",
+        ])
+        .args(["--out-msec", "4000", "--beats", "16", "--execute"])
+        .assert()
+        .code(0);
+    rbx_cmd(&db_path)
+        .args([
+            "tracks", "cues", "add", "101", "5000", "--kind", "hot", "--slot", "1",
+        ])
+        .args(["--out-msec", "6000", "--color", "violet", "--execute"])
+        .assert()
+        .code(0);
+
+    let pool = common::open_pool(&db_path).await;
+    let rows: Vec<(i64, i64, i64, i64, i64)> = sqlx::query_as(
+        "SELECT Kind, OutMsec, Color, ColorTableIndex, BeatLoopSize FROM djmdCue \
+         WHERE ContentID = '101' ORDER BY InMsec",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        rows,
+        vec![(5, 4000, 255, 0, 1048577), (1, 6000, 255, 49, 0)]
+    );
+}
 
 /// `--active` on a memory loop writes Kind 4, on a hot cue loop ActiveLoop 1.
 #[tokio::test]
