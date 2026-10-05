@@ -1931,6 +1931,55 @@ async fn cues_add_hot_cue_color_by_name() {
     assert_eq!(indexes, vec![(49,), (14,), (42,)]);
 }
 
+/// `cues update --color none` on a hot cue writes ColorTableIndex 0,
+/// which is what the menu's reset (初期化) writes in rekordbox 7.
+#[tokio::test]
+async fn cues_update_hot_cue_color_none_resets_it() {
+    let (db_path, _dir) = common::setup_db().await;
+    let assert = rbx_cmd(&db_path)
+        .args([
+            "tracks", "cues", "add", "101", "1000", "--kind", "hot", "--slot", "1",
+        ])
+        .args(["--color", "red", "--execute"])
+        .assert()
+        .code(0);
+    let cue_id = stdout_json(&assert)["result"]["cue_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    rbx_cmd(&db_path)
+        .args([
+            "tracks",
+            "cues",
+            "update",
+            &cue_id,
+            "--color",
+            "none",
+            "--execute",
+        ])
+        .assert()
+        .code(0);
+
+    let pool = common::open_pool(&db_path).await;
+    let (color, index): (i64, i64) =
+        sqlx::query_as("SELECT Color, ColorTableIndex FROM djmdCue WHERE ID = ?")
+            .bind(&cue_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!((color, index), (-1, 0));
+
+    let assert = rbx_cmd(&db_path)
+        .args(["tracks", "cues", "list", "101"])
+        .assert()
+        .code(0);
+    assert_eq!(
+        stdout_json(&assert)["items"][0]["color"],
+        serde_json::Value::Null
+    );
+}
+
 /// `cues list` reports a hot cue's color by its name.
 #[tokio::test]
 async fn cues_list_reports_hot_cue_menu_color() {

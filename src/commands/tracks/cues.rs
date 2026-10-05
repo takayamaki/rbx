@@ -49,8 +49,10 @@ async fn check_position_format(
 const MAX_MEMORY_CUES: i64 = 10;
 /// Color of a cue that never had one.
 const NO_COLOR: i32 = -1;
-/// Color rekordbox writes when the user clears a cue's color.
+/// Color rekordbox writes when the user clears a memory cue's color.
 const CLEARED_COLOR: i32 = 255;
+/// ColorTableIndex rekordbox writes when the user resets a hot cue's color.
+const RESET_HOT_CUE_COLOR: i32 = 0;
 pub(crate) const MEMORY_COLORS: [&str; 8] = [
     "pink", "red", "orange", "yellow", "green", "aqua", "blue", "purple",
 ];
@@ -487,6 +489,7 @@ async fn handle_track_cue_update(
     }
     let color_change = match color.as_deref() {
         None => None,
+        Some("none") if !cue.is_memory() => Some(ColorChange::HotCue(RESET_HOT_CUE_COLOR)),
         Some(name) if !cue.is_memory() => match hot_cue_color(name) {
             Some(v) => Some(ColorChange::HotCue(v)),
             None => {
@@ -739,7 +742,7 @@ pub(crate) fn describe(action: &str) -> Option<serde_json::Value> {
                     "--color",
                     "string",
                     false,
-                    "Memory cue: pink, red, orange, yellow, green, aqua, blue, purple, or none. Hot cue: a hot cue color name or 1-16",
+                    "Memory cue: pink, red, orange, yellow, green, aqua, blue, purple, or none. Hot cue: a hot cue color name, 1-16, or none",
                 ),
                 flag(
                     "--execute",

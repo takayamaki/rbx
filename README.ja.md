@@ -155,7 +155,7 @@ MEMORY CUE の色は pink（桃）・red（赤）・orange（橙）・yellow（�
 CUE は rekordbox と同じ形で書く。
 djmdCue の行に加えて、曲ごとの `contentCue`（その曲の全 CUE の JSON）と `djmdContent.CueUpdated` も更新する。
 未対応:
-HOT CUE の色の初期化、ループ、
+ループ、
 mp3 / FLAC への CUE の配置（rekordbox はファイル内のオフセットも持つため）。
 
 ### tracks mytags（トラックへのタグ付け外し）

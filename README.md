@@ -169,7 +169,7 @@ Memory cue colors are pink, red, orange, yellow, green, aqua, blue and purple (C
 Cues are written the way rekordbox writes them:
 the djmdCue row, the track's `contentCue` row (all its cues as JSON), and `djmdContent.CueUpdated`.
 Not supported yet:
-resetting a hot cue color, loops,
+loops,
 and placing cues on mp3 / FLAC files (rekordbox also stores an offset inside the file for those).
 
 ### tracks mytags
