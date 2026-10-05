@@ -1467,7 +1467,25 @@ async fn cues_add_bumps_cue_updated_and_usns() {
 
 /// Hot cue slots A-C are Kind 1-3 and D-H are Kind 5-9 (Kind 4 is not a slot).
 #[tokio::test]
-async fn cues_add_hot_cue_slots_d_to_h_use_kind_5_to_9() {}
+async fn cues_add_hot_cue_slots_d_to_h_use_kind_5_to_9() {
+    let (db_path, _dir) = common::setup_db().await;
+
+    for (slot, msec) in [("1", "1000"), ("3", "3000"), ("4", "4000"), ("8", "8000")] {
+        rbx_cmd(&db_path)
+            .args(["tracks", "cues", "add", "101", msec, "--kind", "hot"])
+            .args(["--slot", slot, "--execute"])
+            .assert()
+            .code(0);
+    }
+
+    let pool = common::open_pool(&db_path).await;
+    let kinds: Vec<(i64, i64)> =
+        sqlx::query_as("SELECT InMsec, Kind FROM djmdCue WHERE ContentID = '101' ORDER BY InMsec")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(kinds, vec![(1000, 1), (3000, 3), (4000, 5), (8000, 9)]);
+}
 
 /// `--color pink|red|orange|yellow|green|aqua|blue|purple` sets Color 0-7 on a
 /// memory cue. Without it, Color is -1 (no color).

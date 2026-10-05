@@ -14,6 +14,15 @@ fn msec_to_frame(msec: i64) -> i64 {
     msec * 150 / 1000
 }
 
+/// Hot cue slots A-C are Kind 1-3 and D-H are Kind 5-9: rekordbox skips Kind 4.
+pub(crate) fn slot_to_kind(slot: i32) -> i32 {
+    if slot <= 3 {
+        slot
+    } else {
+        slot + 1
+    }
+}
+
 pub(crate) async fn handle_track_cues(
     pool: &SqlitePool,
     action: TrackCuesAction,
@@ -104,7 +113,7 @@ async fn handle_track_cue_add(
     let kind_int = match kind {
         "memory" => 0,
         "hot" => match slot {
-            Some(s) if (1..=8).contains(&s) => s,
+            Some(s) if (1..=8).contains(&s) => slot_to_kind(s),
             Some(s) => {
                 return (
                     output::error(
@@ -157,7 +166,8 @@ async fn handle_track_cue_add(
                     output::EXIT_CONFLICT,
                     &format!(
                         "Hot cue slot {} is already occupied on '{}'",
-                        kind_int, title
+                        slot.unwrap_or_default(),
+                        title
                     ),
                     Some(&format!(
                         "Use 'rbx tracks cues list {}' to see existing cues",
