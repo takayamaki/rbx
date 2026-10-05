@@ -297,15 +297,17 @@ async fn handle_playlist_track_remove(
 
     let mut targets = Vec::new();
     if let Some(pos) = position {
-        match sqlx::query_as::<_, (String, String)>(
-            "SELECT ID, ContentID FROM djmdSongPlaylist WHERE PlaylistID = ? AND TrackNo = ?",
+        match sqlx::query_as::<_, (String, String, String)>(
+            "SELECT sp.ID, sp.ContentID, COALESCE(c.Title, '') \
+             FROM djmdSongPlaylist sp LEFT JOIN djmdContent c ON sp.ContentID = c.ID \
+             WHERE sp.PlaylistID = ? AND sp.TrackNo = ?",
         )
         .bind(playlist_id)
         .bind(pos)
         .fetch_optional(pool)
         .await
         {
-            Ok(Some((row_id, tid))) => targets.push((tid, row_id, pos)),
+            Ok(Some((row_id, tid, title))) => targets.push((tid, title, row_id, pos)),
             Ok(None) => {
                 return (
                     output::error(
@@ -358,13 +360,19 @@ async fn handle_playlist_track_remove(
             }
             Err(e) => return db_error(e),
         };
-        targets.push((tid.clone(), existing.0, existing.1));
+        targets.push((tid.clone(), title, existing.0, existing.1));
     }
 
     let plan = serde_json::json!({
         "action": "remove_tracks_from_playlist",
         "playlist": { "id": playlist_id, "name": pl_name },
-        "track_ids": targets.iter().map(|(tid, _, _)| tid).collect::<Vec<_>>(),
+        "track_ids": targets.iter().map(|(tid, ..)| tid).collect::<Vec<_>>(),
+        "tracks": targets
+            .iter()
+            .map(|(tid, title, _, track_no)| {
+                serde_json::json!({ "id": tid, "title": title, "track_no": track_no })
+            })
+            .collect::<Vec<_>>(),
         "count": targets.len(),
     });
 
@@ -376,7 +384,7 @@ async fn handle_playlist_track_remove(
     }
 
     sqlx::query("BEGIN").execute(pool).await.ok();
-    for (_, row_id, _) in &targets {
+    for (_, _, row_id, _) in &targets {
         let _ = sqlx::query("DELETE FROM djmdSongPlaylist WHERE ID = ?")
             .bind(row_id)
             .execute(pool)

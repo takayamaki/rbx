@@ -1147,7 +1147,24 @@ async fn playlist_tracks_remove_at_position_removes_only_that_row() {
 /// Without --execute nothing is written. The plan names the track at that
 /// position so the caller can check it before applying.
 #[tokio::test]
-async fn playlist_tracks_remove_at_position_dry_run_names_the_track() {}
+async fn playlist_tracks_remove_at_position_dry_run_names_the_track() {
+    let (db_path, _dir) = common::setup_db().await;
+    let pool = common::open_pool(&db_path).await;
+    seed_playlist(&pool, &["101", "102", "101", "103"]).await;
+
+    let assert = rbx_cmd(&db_path)
+        .args(["playlists", "tracks", "remove", "501", "--position", "3"])
+        .assert()
+        .code(0);
+    let json = stdout_json(&assert);
+    assert_eq!(json["dry_run"], true);
+    assert_eq!(
+        json["plan"]["tracks"],
+        serde_json::json!([{ "id": "101", "title": "Track One", "track_no": 3 }])
+    );
+
+    assert_eq!(playlist_rows(&pool).await.len(), 4);
+}
 
 /// A position with no row is a usage error and nothing is written.
 #[tokio::test]
