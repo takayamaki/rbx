@@ -131,12 +131,22 @@ flags in snake_case:
 ```sh
 rbx tracks cues list <track_id>        # list MEMORY/HOT cues on a track
 rbx tracks cues add <track_id> 12345   # add MEMORY cue at 12345ms (dry-run)
+rbx tracks cues add <track_id> 12345 --color green
+                                       # add a green MEMORY cue (dry-run)
 rbx tracks cues add <track_id> 92000 --kind hot --slot 1 --comment 'Drop'
-                                       # add HOT cue in slot 1 (dry-run)
+                                       # add HOT cue in slot 1 = A (slots 1-8 are A-H) (dry-run)
 rbx tracks cues update <cue_id> --msec 15000 --comment 'Verse'
                                        # update cue position/comment (dry-run)
+rbx tracks cues update <cue_id> --color none
+                                       # clear a MEMORY cue's color (dry-run)
 rbx tracks cues delete <cue_id>        # delete a cue (dry-run)
 ```
+
+Cues are written the way rekordbox writes them:
+the djmdCue row, the track's `contentCue` row (all its cues as JSON), and `djmdContent.CueUpdated`.
+Not supported yet:
+hot cue colors, loops,
+and placing cues on mp3 / FLAC files (rekordbox also stores an offset inside the file for those).
 
 ### tracks mytags
 

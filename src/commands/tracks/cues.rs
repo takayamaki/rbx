@@ -647,9 +647,15 @@ pub(crate) fn describe(action: &str) -> Option<serde_json::Value> {
                     "--slot",
                     "integer",
                     false,
-                    "Hot cue slot (1-8, required for hot cues)",
+                    "Hot cue slot 1-8 (A-H), required for hot cues",
                 ),
                 flag("--comment", "string", false, "Cue comment/name"),
+                flag(
+                    "--color",
+                    "string",
+                    false,
+                    "Memory cue color: pink, red, orange, yellow, green, aqua, blue or purple. Not supported on hot cues yet",
+                ),
                 flag(
                     "--execute",
                     "bool",
@@ -660,6 +666,7 @@ pub(crate) fn describe(action: &str) -> Option<serde_json::Value> {
             &mutation_result_schema("tracks.cues.add"),
             &[
                 "rbx tracks cues add TRACK_ID 12345",
+                "rbx tracks cues add TRACK_ID 12345 --color green",
                 "rbx tracks cues add TRACK_ID 12345 --kind hot --slot 1 --comment 'Drop' --execute",
             ],
         ),
@@ -670,6 +677,12 @@ pub(crate) fn describe(action: &str) -> Option<serde_json::Value> {
                 flag("--msec", "integer", false, "New position in milliseconds"),
                 flag("--comment", "string", false, "New comment"),
                 flag(
+                    "--color",
+                    "string",
+                    false,
+                    "Memory cue color: pink, red, orange, yellow, green, aqua, blue, purple, or none",
+                ),
+                flag(
                     "--execute",
                     "bool",
                     false,
@@ -679,7 +692,7 @@ pub(crate) fn describe(action: &str) -> Option<serde_json::Value> {
             &mutation_result_schema("tracks.cues.update"),
             &[
                 "rbx tracks cues update CUE_ID --msec 15000 --comment 'Verse'",
-                "rbx tracks cues update CUE_ID --comment 'Chorus' --execute",
+                "rbx tracks cues update CUE_ID --color none --execute",
             ],
         ),
         "cues delete" => describe_command(
@@ -710,10 +723,14 @@ fn cue_schema() -> serde_json::Value {
             "id": { "type": "string" },
             "track_id": { "type": "string" },
             "kind": { "type": "string", "enum": ["memory", "hot", "other"] },
-            "slot": { "type": "integer|null", "description": "Hot cue slot (1-8), null for memory cues" },
+            "slot": { "type": "integer", "description": "Hot cue slot 1-8 (A-H). Only on hot cues" },
             "in_msec": { "type": "integer|null", "description": "Cue position in milliseconds" },
             "out_msec": { "type": "integer|null", "description": "Loop end in milliseconds, null if not a loop" },
-            "color": { "type": "integer|null" },
+            "color": {
+                "type": "string|null",
+                "enum": ["pink", "red", "orange", "yellow", "green", "aqua", "blue", "purple", null],
+                "description": "Memory cue color. null for no color and for hot cues (their palette is not supported yet)",
+            },
             "comment": { "type": "string|null" },
         },
     })
