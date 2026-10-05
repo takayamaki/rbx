@@ -1168,8 +1168,36 @@ async fn playlist_tracks_remove_at_position_dry_run_names_the_track() {
 
 /// A position with no row is a usage error and nothing is written.
 #[tokio::test]
-async fn playlist_tracks_remove_at_out_of_range_position_is_a_usage_error() {}
+async fn playlist_tracks_remove_at_out_of_range_position_is_a_usage_error() {
+    let (db_path, _dir) = common::setup_db().await;
+    let pool = common::open_pool(&db_path).await;
+    seed_playlist(&pool, &["101", "102"]).await;
+
+    for position in ["0", "3"] {
+        let assert = rbx_cmd(&db_path)
+            .args(["playlists", "tracks", "remove", "501"])
+            .args(["--position", position, "--execute"])
+            .assert()
+            .code(2);
+        let json = stdout_json(&assert);
+        assert_eq!(json["error"]["category"], "usage", "position {}", position);
+    }
+
+    assert_eq!(playlist_rows(&pool).await, rows(&[(1, "101"), (2, "102")]));
+}
 
 /// Track IDs and `--position` together are ambiguous and rejected.
 #[tokio::test]
-async fn playlist_tracks_remove_with_track_ids_and_position_is_a_usage_error() {}
+async fn playlist_tracks_remove_with_track_ids_and_position_is_a_usage_error() {
+    let (db_path, _dir) = common::setup_db().await;
+    let pool = common::open_pool(&db_path).await;
+    seed_playlist(&pool, &["101", "102", "103"]).await;
+
+    rbx_cmd(&db_path)
+        .args(["playlists", "tracks", "remove", "501", "102"])
+        .args(["--position", "3", "--execute"])
+        .assert()
+        .code(2);
+
+    assert_eq!(playlist_rows(&pool).await.len(), 3);
+}

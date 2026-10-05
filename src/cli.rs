@@ -265,7 +265,7 @@ pub(crate) enum PlaylistTracksAction {
         /// One or more track IDs
         track_ids: Vec<String>,
         /// Remove the N-th row (1-based) instead of rows found by track ID
-        #[arg(long)]
+        #[arg(long, conflicts_with = "track_ids")]
         position: Option<i32>,
         /// Actually apply the change
         #[arg(long)]
