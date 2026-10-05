@@ -155,6 +155,34 @@ async fn handle_playlist_track_add(
         Ok((n,)) => n.unwrap_or(0),
         Err(e) => return db_error(e),
     };
+    if let Some(pos) = position {
+        let row_count = match sqlx::query_as::<_, (i32,)>(
+            "SELECT COUNT(*) FROM djmdSongPlaylist WHERE PlaylistID = ?",
+        )
+        .bind(playlist_id)
+        .fetch_one(pool)
+        .await
+        {
+            Ok((n,)) => n,
+            Err(e) => return db_error(e),
+        };
+        if pos < 1 || pos > row_count + 1 {
+            return (
+                output::error(
+                    "usage",
+                    output::EXIT_USAGE,
+                    &format!(
+                        "--position must be between 1 and {} (playlist '{}' has {} tracks)",
+                        row_count + 1,
+                        pl_name,
+                        row_count
+                    ),
+                    Some("Use 'rbx playlists tracks list <playlist_id>' to see track numbers"),
+                ),
+                output::EXIT_USAGE,
+            );
+        }
+    }
     // Rows that move down to make room, in TrackNo order
     let shifted = match position {
         None => Vec::new(),

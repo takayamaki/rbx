@@ -1096,7 +1096,24 @@ async fn playlist_tracks_add_at_position_after_last_row_appends() {
 /// `--position 0` or a position past the end + 1 is a usage error and
 /// nothing is written.
 #[tokio::test]
-async fn playlist_tracks_add_at_out_of_range_position_is_a_usage_error() {}
+async fn playlist_tracks_add_at_out_of_range_position_is_a_usage_error() {
+    let (db_path, _dir) = common::setup_db().await;
+    let pool = common::open_pool(&db_path).await;
+    seed_playlist(&pool, &["101", "102"]).await;
+    seed_tracks(&pool, &["103"]).await;
+
+    for position in ["0", "4"] {
+        let assert = rbx_cmd(&db_path)
+            .args(["playlists", "tracks", "add", "501", "103"])
+            .args(["--position", position, "--execute"])
+            .assert()
+            .code(2);
+        let json = stdout_json(&assert);
+        assert_eq!(json["error"]["category"], "usage", "position {}", position);
+    }
+
+    assert_eq!(playlist_rows(&pool).await, rows(&[(1, "101"), (2, "102")]));
+}
 
 /// `remove --position N` removes only the N-th row, even when the same track
 /// is in the playlist twice, and renumbers the rest.
