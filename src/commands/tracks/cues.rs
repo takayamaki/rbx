@@ -7,6 +7,8 @@ use crate::cli::TrackCuesAction;
 use crate::commands::{db_error, resolve_track_summary};
 use crate::rows::CueRow;
 
+use super::content_cue;
+
 /// rekordbox stores cue positions in frames of 1/150 s, rounded down.
 fn msec_to_frame(msec: i64) -> i64 {
     msec * 150 / 1000
@@ -199,7 +201,8 @@ async fn handle_track_cue_add(
         Ok((u,)) => u,
         Err(e) => return db_error(e),
     };
-    match sqlx::query(
+    sqlx::query("BEGIN").execute(pool).await.ok();
+    let written = sqlx::query(
         "INSERT INTO djmdCue (ID, ContentID, InMsec, InFrame, InMpegFrame, InMpegAbs, \
          OutMsec, OutFrame, OutMpegFrame, OutMpegAbs, Kind, Color, ColorTableIndex, \
          ActiveLoop, Comment, BeatLoopSize, CueMicrosec, \
@@ -211,19 +214,33 @@ async fn handle_track_cue_add(
     .bind(kind_int).bind(comment.as_deref().filter(|c| !c.is_empty()))
     .bind(&content_uuid).bind(&new_uuid)
     .bind(&now).bind(&now)
-    .execute(pool).await {
-        Ok(_) => (
-            output::mutation_done("tracks.cues.add", serde_json::json!({
-                "cue_id": new_id,
-                "track": { "id": track_id, "title": title, "artist": artist },
-                "kind": kind,
-                "slot": slot,
-                "in_msec": msec,
-                "comment": comment,
-            })),
-            output::EXIT_OK,
-        ),
-        Err(e) => db_error(e),
+    .execute(pool).await;
+    let written = match written {
+        Ok(_) => content_cue::sync(pool, track_id, &[new_id.as_str()], &now).await,
+        Err(e) => Err(e),
+    };
+    match written {
+        Ok(_) => {
+            sqlx::query("COMMIT").execute(pool).await.ok();
+            (
+                output::mutation_done(
+                    "tracks.cues.add",
+                    serde_json::json!({
+                        "cue_id": new_id,
+                        "track": { "id": track_id, "title": title, "artist": artist },
+                        "kind": kind,
+                        "slot": slot,
+                        "in_msec": msec,
+                        "comment": comment,
+                    }),
+                ),
+                output::EXIT_OK,
+            )
+        }
+        Err(e) => {
+            sqlx::query("ROLLBACK").execute(pool).await.ok();
+            db_error(e)
+        }
     }
 }
 

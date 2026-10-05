@@ -1220,6 +1220,9 @@ type CueNullColumns = (
     Option<i64>,
 );
 
+/// ID, UUID, Cues, rb_cue_count, created_at, rb_* status fields
+type ContentCueRow = (String, String, String, i64, String, i64, i64, i64, i64);
+
 /// A memory cue gets InFrame = floor(msec * 150 / 1000), OutMsec -1, and NULL
 /// in the columns rekordbox leaves empty (CueMicrosec, ActiveLoop, BeatLoopSize,
 /// ColorTableIndex, Comment). The cue row itself has no USN, like rekordbox's.
@@ -1275,7 +1278,83 @@ async fn cues_add_memory_cue_writes_frame_and_leaves_unused_columns_null() {
 /// Cues is a JSON array with the cue (NULL fields left out, ISO timestamps)
 /// and rb_cue_count is 1.
 #[tokio::test]
-async fn cues_add_creates_the_content_cue_row() {}
+async fn cues_add_creates_the_content_cue_row() {
+    let (db_path, _dir) = common::setup_db().await;
+
+    let assert = rbx_cmd(&db_path)
+        .args(["tracks", "cues", "add", "101", "141013", "--execute"])
+        .assert()
+        .code(0);
+    let cue_id = stdout_json(&assert)["result"]["cue_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let pool = common::open_pool(&db_path).await;
+    let (id, uuid, cues, count, created_at, ds, lds, ld, ls): ContentCueRow = sqlx::query_as(
+        "SELECT ID, UUID, Cues, rb_cue_count, created_at, \
+         rb_data_status, rb_local_data_status, rb_local_deleted, rb_local_synced \
+         FROM contentCue WHERE ContentID = '101'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        id, "c0000000-0000-0000-0000-000000000101",
+        "ID is the track UUID"
+    );
+    assert!(!uuid.is_empty());
+    assert_ne!(uuid, id);
+    assert_eq!(count, 1);
+    assert!(
+        ts_regex().is_match(&created_at),
+        "bad timestamp: {}",
+        created_at
+    );
+    assert_eq!((ds, lds, ld, ls), (0, 0, 0, 0));
+
+    // Same keys, in the same order, as the entries rekordbox writes for a plain cue
+    let keys = [
+        "ID",
+        "ContentID",
+        "ContentUUID",
+        "InMsec",
+        "InFrame",
+        "InMpegFrame",
+        "InMpegAbs",
+        "OutMsec",
+        "OutFrame",
+        "OutMpegFrame",
+        "OutMpegAbs",
+        "Kind",
+        "Color",
+        "UUID",
+        "created_at",
+        "updated_at",
+    ];
+    let key_re = regex::Regex::new(r#""([A-Za-z_]+)":"#).unwrap();
+    let found: Vec<&str> = key_re
+        .captures_iter(&cues)
+        .map(|c| c.get(1).unwrap().as_str())
+        .collect();
+    assert_eq!(found, keys);
+
+    let entries: serde_json::Value = serde_json::from_str(&cues).unwrap();
+    let entry = &entries[0];
+    assert_eq!(entry["ID"], cue_id.as_str());
+    assert_eq!(entry["ContentID"], "101");
+    assert_eq!(entry["InMsec"], 141013);
+    assert_eq!(entry["InFrame"], 21151);
+    assert_eq!(entry["OutMsec"], -1);
+    assert_eq!(entry["Kind"], 0);
+    assert_eq!(entry["Color"], -1);
+    let iso = regex::Regex::new(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}\+00:00$").unwrap();
+    assert!(
+        iso.is_match(entry["created_at"].as_str().unwrap()),
+        "{}",
+        entry["created_at"]
+    );
+}
 
 /// A cue on a track that already has cues is appended to its contentCue JSON.
 /// The entries rekordbox wrote are kept byte for byte.
