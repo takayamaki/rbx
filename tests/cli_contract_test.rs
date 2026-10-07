@@ -2415,3 +2415,248 @@ async fn cues_add_bad_loop_flags_are_usage_errors() {
         .unwrap();
     assert_eq!(rows, 0);
 }
+
+// --- tracks grid copy ---
+// Copies a beat grid (including BPM changes) from one track to another with the same audio,
+// e.g. an mp3 and its m4a re-encode. Checked in rekordbox 7 with one pair:
+// PQTZ replaced in the target's .DAT and PQT2 removed from its .EXT shows the copied grid.
+// The list BPM comes from djmdContent.BPM, so it is copied too.
+// Order: the everyday case first, then dry-run, offsets, backups, and errors last.
+
+/// Source (101, like an mp3): 4 beats at 120 BPM, then 150 BPM.
+/// Target (102, like its m4a re-encode, 7 ms earlier): a constant 150 BPM grid.
+fn source_grid() -> Vec<(u16, u16, u32)> {
+    let mut beats: Vec<(u16, u16, u32)> = (0..4)
+        .map(|i| (i as u16 + 1, 12000, 107 + i * 500))
+        .collect();
+    beats.extend((0..8).map(|i| ((i % 4) as u16 + 1, 15000, 2107 + i * 400)));
+    beats
+}
+
+fn target_grid() -> Vec<(u16, u16, u32)> {
+    (0..11)
+        .map(|i| ((i % 4) as u16 + 1, 15000, 100 + i * 400))
+        .collect()
+}
+
+const SRC_ANLZ: &str = "/PIONEER/USBANLZ/aaa/src/ANLZ0000.DAT";
+const DST_ANLZ: &str = "/PIONEER/USBANLZ/bbb/dst/ANLZ0000.DAT";
+
+/// Writes analysis files for tracks 101 and 102 next to the fixture db
+/// (<db dir>/share/PIONEER/USBANLZ/...) and points AnalysisDataPath at them.
+async fn seed_grids(db_path: &std::path::Path, src: &[(u16, u16, u32)], dst: &[(u16, u16, u32)]) {
+    let share = db_path.parent().unwrap().join("share");
+    let write = |path: &str, bytes: Vec<u8>| {
+        let full = share.join(path.trim_start_matches('/'));
+        std::fs::create_dir_all(full.parent().unwrap()).unwrap();
+        std::fs::write(full, bytes).unwrap();
+    };
+    let ppth = common::anlz_tag("PPTH", &[0, 0, 0, 4], b"a.mp");
+    write(
+        SRC_ANLZ,
+        common::anlz_file(&[ppth.clone(), common::pqtz_tag(src)]),
+    );
+    write(
+        SRC_ANLZ.replace("DAT", "EXT").as_str(),
+        common::anlz_file(std::slice::from_ref(&ppth)),
+    );
+    write(
+        DST_ANLZ,
+        common::anlz_file(&[ppth.clone(), common::pqtz_tag(dst)]),
+    );
+    write(
+        DST_ANLZ.replace("DAT", "EXT").as_str(),
+        common::anlz_file(&[
+            ppth,
+            common::anlz_tag("PQT2", &[0; 44], &[3, 64, 2, 236]),
+            common::anlz_tag("PWV3", &[0, 0, 0, 1], &[5]),
+        ]),
+    );
+    let pool = common::open_pool(db_path).await;
+    for (id, path, bpm) in [("101", SRC_ANLZ, 12000), ("102", DST_ANLZ, 15000)] {
+        sqlx::query("UPDATE djmdContent SET AnalysisDataPath = ?, BPM = ? WHERE ID = ?")
+            .bind(path)
+            .bind(bpm)
+            .bind(id)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+}
+
+fn read_share(db_path: &std::path::Path, path: &str) -> Vec<u8> {
+    std::fs::read(
+        db_path
+            .parent()
+            .unwrap()
+            .join("share")
+            .join(path.trim_start_matches('/')),
+    )
+    .unwrap()
+}
+
+/// The source grid is written to the target shifted by the offset measured where both
+/// grids share a tempo; the target's PQT2 is removed and its BPM column is copied.
+#[tokio::test]
+async fn grid_copy_writes_the_source_grid_shifted_by_the_measured_offset() {
+    let (db_path, _dir) = common::setup_db().await;
+    seed_grids(&db_path, &source_grid(), &target_grid()).await;
+
+    let assert = rbx_cmd(&db_path)
+        .args(["tracks", "grid", "copy", "101", "102", "--execute"])
+        .assert()
+        .code(0);
+    let json = stdout_json(&assert);
+    assert_eq!(json["kind"], "tracks.grid.copy");
+    assert_eq!(json["result"]["offset_ms"], 7);
+
+    let shifted: Vec<rbx::anlz::Beat> = source_grid()
+        .into_iter()
+        .map(|(beat, tempo, ms)| rbx::anlz::Beat {
+            beat,
+            tempo,
+            ms: ms - 7,
+        })
+        .collect();
+    let dat = read_share(&db_path, DST_ANLZ);
+    assert_eq!(rbx::anlz::read_beats(&dat).unwrap(), shifted);
+    let ext = read_share(&db_path, &DST_ANLZ.replace("DAT", "EXT"));
+    let ppth = common::anlz_tag("PPTH", &[0, 0, 0, 4], b"a.mp");
+    assert_eq!(
+        ext,
+        common::anlz_file(&[ppth, common::anlz_tag("PWV3", &[0, 0, 0, 1], &[5])]),
+        "PQT2 is removed, the rest is kept"
+    );
+
+    let pool = common::open_pool(&db_path).await;
+    let (bpm, updated_at): (i64, String) =
+        sqlx::query_as("SELECT BPM, updated_at FROM djmdContent WHERE ID = '102'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(bpm, 12000);
+    assert!(
+        ts_regex().is_match(&updated_at),
+        "bad timestamp: {}",
+        updated_at
+    );
+}
+
+/// Without --execute nothing is written; the plan shows the offset, beat counts and BPM changes.
+#[tokio::test]
+async fn grid_copy_dry_run_writes_nothing() {
+    let (db_path, _dir) = common::setup_db().await;
+    seed_grids(&db_path, &source_grid(), &target_grid()).await;
+    let dat_before = read_share(&db_path, DST_ANLZ);
+
+    let assert = rbx_cmd(&db_path)
+        .args(["tracks", "grid", "copy", "101", "102"])
+        .assert()
+        .code(0);
+    let json = stdout_json(&assert);
+    assert_eq!(json["dry_run"], true);
+    assert_eq!(json["plan"]["offset_ms"], 7);
+    assert_eq!(json["plan"]["from"]["beats"], 12);
+    assert_eq!(json["plan"]["to"]["beats"], 11);
+
+    assert_eq!(read_share(&db_path, DST_ANLZ), dat_before);
+}
+
+/// --offset-ms overrides the measured offset.
+#[tokio::test]
+async fn grid_copy_offset_ms_overrides_the_measurement() {
+    let (db_path, _dir) = common::setup_db().await;
+    seed_grids(&db_path, &source_grid(), &target_grid()).await;
+
+    rbx_cmd(&db_path)
+        .args([
+            "tracks",
+            "grid",
+            "copy",
+            "101",
+            "102",
+            "--offset-ms",
+            "-3",
+            "--execute",
+        ])
+        .assert()
+        .code(0);
+
+    let beats = rbx::anlz::read_beats(&read_share(&db_path, DST_ANLZ)).unwrap();
+    assert_eq!(beats[0].ms, 110, "107 - (-3)");
+}
+
+/// The original .DAT and .EXT of the target are kept next to them before they are changed.
+#[tokio::test]
+async fn grid_copy_keeps_a_backup_of_the_original_files() {
+    let (db_path, _dir) = common::setup_db().await;
+    seed_grids(&db_path, &source_grid(), &target_grid()).await;
+    let ext_path = DST_ANLZ.replace("DAT", "EXT");
+    let (dat_before, ext_before) = (
+        read_share(&db_path, DST_ANLZ),
+        read_share(&db_path, &ext_path),
+    );
+
+    let assert = rbx_cmd(&db_path)
+        .args(["tracks", "grid", "copy", "101", "102", "--execute"])
+        .assert()
+        .code(0);
+
+    assert_eq!(
+        read_share(&db_path, &format!("{}.rbx-backup", DST_ANLZ)),
+        dat_before
+    );
+    assert_eq!(
+        read_share(&db_path, &format!("{}.rbx-backup", ext_path)),
+        ext_before
+    );
+    let backups = &stdout_json(&assert)["result"]["backups"];
+    assert_eq!(backups.as_array().unwrap().len(), 2);
+
+    // A second copy keeps the first backup (the files rekordbox wrote), not rbx's output
+    rbx_cmd(&db_path)
+        .args([
+            "tracks",
+            "grid",
+            "copy",
+            "101",
+            "102",
+            "--offset-ms",
+            "0",
+            "--execute",
+        ])
+        .assert()
+        .code(0);
+    assert_eq!(
+        read_share(&db_path, &format!("{}.rbx-backup", DST_ANLZ)),
+        dat_before
+    );
+}
+
+/// When no tempo is shared, the offset cannot be measured and --offset-ms is required.
+#[tokio::test]
+async fn grid_copy_without_a_shared_tempo_needs_offset_ms() {
+    let (db_path, _dir) = common::setup_db().await;
+    let other: Vec<(u16, u16, u32)> = (0..8)
+        .map(|i| ((i % 4) as u16 + 1, 9000, 100 + i * 667))
+        .collect();
+    seed_grids(&db_path, &source_grid(), &other).await;
+
+    let assert = rbx_cmd(&db_path)
+        .args(["tracks", "grid", "copy", "101", "102", "--execute"])
+        .assert()
+        .code(2);
+    assert_eq!(stdout_json(&assert)["error"]["category"], "usage");
+}
+
+/// A track without analysis files is not_found.
+#[tokio::test]
+async fn grid_copy_missing_analysis_file_is_not_found() {
+    let (db_path, _dir) = common::setup_db().await;
+
+    let assert = rbx_cmd(&db_path)
+        .args(["tracks", "grid", "copy", "101", "102"])
+        .assert()
+        .code(3);
+    assert_eq!(stdout_json(&assert)["error"]["category"], "not_found");
+}

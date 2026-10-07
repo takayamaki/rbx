@@ -54,7 +54,7 @@ async fn create_schema(pool: &SqlitePool) {
              Length INTEGER, BPM INTEGER, FolderPath TEXT, FileNameL TEXT, FileNameS TEXT, \
              Rating INTEGER, ColorID TEXT, Commnt TEXT, \
              GenreID TEXT, AlbumID TEXT, TrackNo INTEGER, DiscNo INTEGER, ReleaseYear INTEGER, \
-             FileType INTEGER, CueUpdated TEXT, {})",
+             FileType INTEGER, CueUpdated TEXT, AnalysisDataPath TEXT, {})",
             RB_COLUMNS
         ),
         format!(
@@ -225,4 +225,40 @@ async fn seed(pool: &SqlitePool) {
     .execute(pool)
     .await
     .unwrap();
+}
+
+/// Builds one ANLZ section: fourcc, header length, total length, the rest of the header, the body.
+pub fn anlz_tag(fourcc: &str, header_rest: &[u8], body: &[u8]) -> Vec<u8> {
+    let len_header = 12 + header_rest.len() as u32;
+    let mut tag = fourcc.as_bytes().to_vec();
+    tag.extend(len_header.to_be_bytes());
+    tag.extend((len_header + body.len() as u32).to_be_bytes());
+    tag.extend(header_rest);
+    tag.extend(body);
+    tag
+}
+
+/// A PQTZ beat grid section from (beat, tempo BPM * 100, time ms).
+pub fn pqtz_tag(beats: &[(u16, u16, u32)]) -> Vec<u8> {
+    let mut header = 0u32.to_be_bytes().to_vec();
+    header.extend(0x80000u32.to_be_bytes());
+    header.extend((beats.len() as u32).to_be_bytes());
+    let mut body = Vec::new();
+    for (beat, tempo, ms) in beats {
+        body.extend(beat.to_be_bytes());
+        body.extend(tempo.to_be_bytes());
+        body.extend(ms.to_be_bytes());
+    }
+    anlz_tag("PQTZ", &header, &body)
+}
+
+/// A whole ANLZ file: the 28-byte PMAI header and the sections.
+pub fn anlz_file(tags: &[Vec<u8>]) -> Vec<u8> {
+    let body: Vec<u8> = tags.concat();
+    let mut file = b"PMAI".to_vec();
+    file.extend(28u32.to_be_bytes());
+    file.extend((28 + body.len() as u32).to_be_bytes());
+    file.extend([0u8; 16]);
+    file.extend(body);
+    file
 }

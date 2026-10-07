@@ -19,6 +19,8 @@ Rust source code.
 | `commands/tracks/mod.rs` | `tracks list / get / search / filter`, track SQL constants |
 | `commands/tracks/update.rs` | `tracks update`: `TrackFields`, artist / genre / album resolve-or-create |
 | `commands/tracks/cues.rs` | `tracks cues list / add / update / delete` |
+| `commands/tracks/content_cue.rs` | contentCue sync: rebuilds a track's cue JSON from djmdCue after a cue change |
+| `commands/tracks/grid.rs` | `tracks grid copy`: beat grid copy between analysis files |
 | `commands/tracks/mytags.rs` | `tracks mytags list / add / remove` |
 | `commands/playlists.rs` | `playlists *` (incl. `masterPlaylists6.xml` sync) |
 | `commands/mytags.rs` | `mytags *` (tag category / tag CRUD) |
@@ -29,6 +31,7 @@ Rust source code.
 | `helpers.rs` | Native-format helpers: timestamps, USN allocation, numeric IDs |
 | `output.rs` | Structured JSON output helpers. Envelope builders (success/error/mutation) and exit code constants |
 | `playlist_xml.rs` | `masterPlaylists6.xml` node add / remove |
+| `anlz.rs` | ANLZ analysis files: read / replace the PQTZ beat grid, remove sections |
 
 The layout follows the command tree: to change `rbx tracks cues add`, open `commands/tracks/cues.rs`. Its handler, its `describe` entry and its output schema live there together, so a new flag is added in one file.
 

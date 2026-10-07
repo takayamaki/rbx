@@ -170,6 +170,22 @@ djmdCue の行に加えて、曲ごとの `contentCue`（その曲の全 CUE の
 未対応:
 mp3 / FLAC への CUE の配置（rekordbox はファイル内のオフセットも持つため）。
 
+### tracks grid（ビートグリッド）
+
+```sh
+rbx tracks grid copy <from_id> <to_id> # BPM 変化点も含めて、同じ音源の別の曲にビートグリッドを写す（dry-run）
+rbx tracks grid copy <from_id> <to_id> --offset-ms 7 --execute
+                                       # ずれを測らずに 7 ms（from − to）ずらす
+```
+
+ビートグリッドは master.db ではなく、曲の解析ファイル（`<master.db のフォルダ>/share` + `djmdContent.AnalysisDataPath`）にある。
+`grid copy` は写し先の PQTZ（`ANLZ0000.DAT`）にグリッドを書き、写し先の PQT2（`ANLZ0000.EXT`。未解読のもう一つのグリッド）を外す。
+PQT2 が無ければ rekordbox は PQTZ のグリッドを表示する（rekordbox 7 で確認）。
+一覧の BPM（`djmdContent.BPM`）はグリッドから更新されないので、これも写す。
+ずれは、両方のグリッドで同じ BPM の拍どうしの距離の中央値。
+写し先の元のファイルは隣に `*.rbx-backup` として残す（最初のバックアップは上書きしない）。
+実行前に rekordbox を閉じること。
+
 ### tracks mytags（トラックへのタグ付け外し）
 
 ```sh

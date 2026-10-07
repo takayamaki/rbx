@@ -1,3 +1,4 @@
+pub mod anlz;
 pub mod db;
 pub mod helpers;
 pub mod output;
