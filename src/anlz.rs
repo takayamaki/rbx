@@ -139,3 +139,10 @@ pub fn replace_beats(file: &[u8], beats: &[Beat]) -> Result<Vec<u8>, AnlzError> 
         Some(tag)
     })
 }
+
+/// Drops every section with this fourcc, keeping the others byte for byte.
+pub fn remove_sections(file: &[u8], fourcc: &[u8; 4]) -> Result<Vec<u8>, AnlzError> {
+    rebuild(file, |section, bytes| {
+        (&section.fourcc != fourcc).then(|| bytes.to_vec())
+    })
+}

@@ -84,7 +84,16 @@ fn replaces_pqtz_and_updates_lengths() {
 
 /// Removing PQT2 drops only that tag and updates the file length.
 #[test]
-fn removes_pqt2_and_keeps_other_tags() {}
+fn removes_pqt2_and_keeps_other_tags() {
+    let ppth = common::anlz_tag("PPTH", &[0, 0, 0, 4], b"a.m4");
+    let pwv3 = common::anlz_tag("PWV3", &[0, 0, 0, 1], &[5]);
+    let pqt2 = common::anlz_tag("PQT2", &[0; 44], &[3, 64, 2, 236]);
+    let file = common::anlz_file(&[ppth.clone(), pqt2, pwv3.clone()]);
+
+    let new = anlz::remove_sections(&file, b"PQT2").unwrap();
+
+    assert_eq!(new, common::anlz_file(&[ppth, pwv3]));
+}
 
 /// A file that is not an ANLZ file (no PMAI) or has no PQTZ is an error, not a panic.
 #[test]
