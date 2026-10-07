@@ -148,6 +148,8 @@ pub(crate) struct CueRow {
     kind: Option<i32>,
     color: Option<i32>,
     color_table_index: Option<i32>,
+    active_loop: Option<i32>,
+    beat_loop_size: Option<i32>,
     comment: Option<String>,
 }
 
@@ -156,13 +158,18 @@ impl CueRow {
         &self.content_id
     }
 
+    pub(crate) fn is_loop(&self) -> bool {
+        self.out_msec.is_some_and(|v| v >= 0)
+    }
+
     pub(crate) fn is_memory(&self) -> bool {
-        self.kind == Some(0)
+        matches!(self.kind, Some(0 | 4))
     }
 
     pub(crate) fn to_json(&self) -> serde_json::Value {
+        // Kind 4 is an active memory loop
         let (kind, slot) = match self.kind {
-            Some(0) => ("memory", None),
+            Some(0 | 4) => ("memory", None),
             Some(k @ (1..=3 | 5..=9)) => ("hot", Some(kind_to_slot(k))),
             _ => ("other", None),
         };
@@ -189,6 +196,17 @@ impl CueRow {
         });
         if let Some(slot) = slot {
             json["slot"] = slot.into();
+        }
+        if self.out_msec.is_some_and(|v| v >= 0) {
+            let active = self.kind == Some(4) || self.active_loop == Some(1);
+            json["active"] = active.into();
+            json["beats"] = match self.beat_loop_size {
+                Some(v) if v > 0 => match (v >> 16, v & 0xFFFF) {
+                    (n, 1) => n.to_string().into(),
+                    (n, d) => format!("{}/{}", n, d).into(),
+                },
+                _ => serde_json::Value::Null,
+            };
         }
         json
     }

@@ -126,8 +126,19 @@ rbx tracks cues update <cue_id> --msec 15000 --comment 'Verse'
                                        # CUE の位置・コメント変更（dry-run）
 rbx tracks cues update <cue_id> --color none
                                        # MEMORY CUE の色を外す（dry-run）
+rbx tracks cues add <track_id> 104987 --out-msec 109160 --beats 8 --active
+                                       # ActiveLoop が ON の 8 拍の MEMORY ループを追加（dry-run）
+rbx tracks cues add <track_id> 92000 --kind hot --slot 2 --out-msec 97750 --beats 16
+                                       # 16 拍の HOT CUE ループをスロット2（= B）に追加（dry-run）
+rbx tracks cues update <cue_id> --out-msec 100000
+                                       # ループの終わりを動かす（dry-run）
 rbx tracks cues delete <cue_id>        # CUE 削除（dry-run）
 ```
+
+ループ: `--beats` はループの拍数（`8`、`1/2`）。拍に合わないループなら付けない。
+ActiveLoop は 1 曲に MEMORY ループ 1 つ・HOT CUE ループ 1 つまで同時に設定できる。
+HOT CUE の ActiveLoop は CDJ などに export すると効かない。export 先で使うなら MEMORY ループにする。
+
 
 HOT CUE の色は、rekordbox の HOT CUE の色メニューの 16 色（左から右・上の段から）。名前か番号で指定する:
 
@@ -157,7 +168,6 @@ MEMORY CUE の桃は明るい赤紫（HOT CUE の violet に近い）なので�
 CUE は rekordbox と同じ形で書く。
 djmdCue の行に加えて、曲ごとの `contentCue`（その曲の全 CUE の JSON）と `djmdContent.CueUpdated` も更新する。
 未対応:
-ループ、
 mp3 / FLAC への CUE の配置（rekordbox はファイル内のオフセットも持つため）。
 
 ### tracks mytags（トラックへのタグ付け外し）

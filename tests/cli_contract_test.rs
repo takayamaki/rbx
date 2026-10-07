@@ -2043,3 +2043,375 @@ async fn cues_hot_cue_color_outside_the_menu_is_a_usage_error() {
         .unwrap();
     assert_eq!(rows, 0);
 }
+
+// --- loops ---
+// Checked against the loops in a real master.db (rekordbox 7) and with the user in rekordbox:
+// a loop has OutMsec / OutFrame, Color 255, ColorTableIndex 0 (or the hot cue color),
+// CueMicrosec 0, Comment '' and BeatLoopSize = beats << 16 | denominator (0 when not on beats).
+// An active memory loop is Kind 4 (ActiveLoop stays 0); an active hot cue loop has ActiveLoop 1.
+// A track has at most one active memory loop and one active hot cue loop.
+
+/// Kind, InFrame, OutMsec, OutFrame, Color, ColorTableIndex, ActiveLoop,
+/// BeatLoopSize, CueMicrosec, Comment
+type LoopColumns = (
+    i64,
+    i64,
+    i64,
+    i64,
+    i64,
+    Option<i64>,
+    Option<i64>,
+    Option<i64>,
+    Option<i64>,
+    Option<String>,
+);
+
+/// `--out-msec` makes a memory cue a loop with the loop columns rekordbox writes.
+#[tokio::test]
+async fn cues_add_memory_loop_writes_the_loop_columns() {
+    let (db_path, _dir) = common::setup_db().await;
+    let assert = rbx_cmd(&db_path)
+        .args([
+            "tracks",
+            "cues",
+            "add",
+            "101",
+            "104987",
+            "--out-msec",
+            "109160",
+            "--execute",
+        ])
+        .assert()
+        .code(0);
+    let cue_id = stdout_json(&assert)["result"]["cue_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let pool = common::open_pool(&db_path).await;
+    let row: LoopColumns = sqlx::query_as(
+        "SELECT Kind, InFrame, OutMsec, OutFrame, Color, ColorTableIndex, ActiveLoop, \
+         BeatLoopSize, CueMicrosec, Comment FROM djmdCue WHERE ID = ?",
+    )
+    .bind(&cue_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        row,
+        (
+            0,
+            15748,
+            109160,
+            16374,
+            255,
+            Some(0),
+            Some(0),
+            Some(0),
+            Some(0),
+            Some(String::new())
+        )
+    );
+
+    let (cues,): (String,) = sqlx::query_as("SELECT Cues FROM contentCue WHERE ContentID = '101'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let entry = &serde_json::from_str::<serde_json::Value>(&cues).unwrap()[0];
+    assert_eq!(entry["OutMsec"], 109160);
+    assert_eq!(entry["OutFrame"], 16374);
+    assert_eq!(entry["Color"], 255);
+    assert_eq!(entry["BeatLoopSize"], 0);
+    assert_eq!(entry["CueMicrosec"], 0);
+}
+
+/// `--beats 8` writes BeatLoopSize 524289 (8 << 16 | 1); `--beats 1/2` writes 65538.
+#[tokio::test]
+async fn cues_add_loop_with_beats_sets_beat_loop_size() {
+    let (db_path, _dir) = common::setup_db().await;
+    for (msec, out, beats) in [("1000", "4000", "8"), ("5000", "5200", "1/2")] {
+        rbx_cmd(&db_path)
+            .args(["tracks", "cues", "add", "101", msec, "--out-msec", out])
+            .args(["--beats", beats, "--execute"])
+            .assert()
+            .code(0);
+    }
+
+    let pool = common::open_pool(&db_path).await;
+    let sizes: Vec<(i64,)> =
+        sqlx::query_as("SELECT BeatLoopSize FROM djmdCue WHERE ContentID = '101' ORDER BY InMsec")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(sizes, vec![(524289,), (65538,)]);
+}
+
+/// A hot cue loop keeps its slot Kind; `--color` sets its ColorTableIndex.
+#[tokio::test]
+async fn cues_add_hot_cue_loop() {
+    let (db_path, _dir) = common::setup_db().await;
+    rbx_cmd(&db_path)
+        .args([
+            "tracks", "cues", "add", "101", "1000", "--kind", "hot", "--slot", "4",
+        ])
+        .args(["--out-msec", "4000", "--beats", "16", "--execute"])
+        .assert()
+        .code(0);
+    rbx_cmd(&db_path)
+        .args([
+            "tracks", "cues", "add", "101", "5000", "--kind", "hot", "--slot", "1",
+        ])
+        .args(["--out-msec", "6000", "--color", "violet", "--execute"])
+        .assert()
+        .code(0);
+
+    let pool = common::open_pool(&db_path).await;
+    let rows: Vec<(i64, i64, i64, i64, i64)> = sqlx::query_as(
+        "SELECT Kind, OutMsec, Color, ColorTableIndex, BeatLoopSize FROM djmdCue \
+         WHERE ContentID = '101' ORDER BY InMsec",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        rows,
+        vec![(5, 4000, 255, 0, 1048577), (1, 6000, 255, 49, 0)]
+    );
+}
+
+/// `--active` on a memory loop writes Kind 4, on a hot cue loop ActiveLoop 1.
+#[tokio::test]
+async fn cues_add_active_loop() {
+    let (db_path, _dir) = common::setup_db().await;
+    rbx_cmd(&db_path)
+        .args(["tracks", "cues", "add", "101", "1000", "--out-msec", "4000"])
+        .args(["--beats", "8", "--active", "--execute"])
+        .assert()
+        .code(0);
+    rbx_cmd(&db_path)
+        .args([
+            "tracks", "cues", "add", "101", "5000", "--kind", "hot", "--slot", "2",
+        ])
+        .args(["--out-msec", "6000", "--active", "--execute"])
+        .assert()
+        .code(0);
+
+    let pool = common::open_pool(&db_path).await;
+    let rows: Vec<(i64, i64)> = sqlx::query_as(
+        "SELECT Kind, ActiveLoop FROM djmdCue WHERE ContentID = '101' ORDER BY InMsec",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(rows, vec![(4, 0), (2, 1)]);
+}
+
+/// `cues list` shows loops with out_msec, beats and active.
+#[tokio::test]
+async fn cues_list_reports_loops() {
+    let (db_path, _dir) = common::setup_db().await;
+    rbx_cmd(&db_path)
+        .args(["tracks", "cues", "add", "101", "1000", "--out-msec", "4000"])
+        .args(["--beats", "8", "--active", "--execute"])
+        .assert()
+        .code(0);
+    rbx_cmd(&db_path)
+        .args([
+            "tracks", "cues", "add", "101", "5000", "--kind", "hot", "--slot", "2",
+        ])
+        .args(["--out-msec", "5200", "--beats", "1/2", "--execute"])
+        .assert()
+        .code(0);
+
+    let assert = rbx_cmd(&db_path)
+        .args(["tracks", "cues", "list", "101"])
+        .assert()
+        .code(0);
+    let json = stdout_json(&assert);
+    let items = json["items"].as_array().unwrap();
+    let memory = items.iter().find(|c| c["in_msec"] == 1000).unwrap();
+    assert_eq!(memory["kind"], "memory");
+    assert_eq!(memory["out_msec"], 4000);
+    assert_eq!(memory["beats"], "8");
+    assert_eq!(memory["active"], true);
+    let hot = items.iter().find(|c| c["in_msec"] == 5000).unwrap();
+    assert_eq!(hot["slot"], 2);
+    assert_eq!(hot["beats"], "1/2");
+    assert_eq!(hot["active"], false);
+}
+
+/// `cues update --out-msec` moves the end of a loop and recomputes OutFrame.
+#[tokio::test]
+async fn cues_update_out_msec_moves_the_loop_end() {
+    let (db_path, _dir) = common::setup_db().await;
+    let assert = rbx_cmd(&db_path)
+        .args([
+            "tracks",
+            "cues",
+            "add",
+            "101",
+            "1000",
+            "--out-msec",
+            "4000",
+            "--execute",
+        ])
+        .assert()
+        .code(0);
+    let cue_id = stdout_json(&assert)["result"]["cue_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    rbx_cmd(&db_path)
+        .args([
+            "tracks",
+            "cues",
+            "update",
+            &cue_id,
+            "--out-msec",
+            "8000",
+            "--execute",
+        ])
+        .assert()
+        .code(0);
+
+    let pool = common::open_pool(&db_path).await;
+    let (out_msec, out_frame): (i64, i64) =
+        sqlx::query_as("SELECT OutMsec, OutFrame FROM djmdCue WHERE ID = ?")
+            .bind(&cue_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!((out_msec, out_frame), (8000, 1200));
+    let (cues,): (String,) = sqlx::query_as("SELECT Cues FROM contentCue WHERE ContentID = '101'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let entry = &serde_json::from_str::<serde_json::Value>(&cues).unwrap()[0];
+    assert_eq!(entry["OutMsec"], 8000);
+}
+
+/// An active memory loop (Kind 4) counts toward the 10 memory cues.
+#[tokio::test]
+async fn cues_add_counts_active_memory_loops_toward_the_memory_cue_limit() {
+    let (db_path, _dir) = common::setup_db().await;
+    rbx_cmd(&db_path)
+        .args([
+            "tracks",
+            "cues",
+            "add",
+            "101",
+            "500",
+            "--out-msec",
+            "900",
+            "--active",
+        ])
+        .arg("--execute")
+        .assert()
+        .code(0);
+    for i in 1..=9 {
+        rbx_cmd(&db_path)
+            .args([
+                "tracks",
+                "cues",
+                "add",
+                "101",
+                &(i * 1000).to_string(),
+                "--execute",
+            ])
+            .assert()
+            .code(0);
+    }
+
+    rbx_cmd(&db_path)
+        .args(["tracks", "cues", "add", "101", "11000", "--execute"])
+        .assert()
+        .code(5);
+}
+
+/// A second active loop of the same kind (memory or hot) is a conflict.
+#[tokio::test]
+async fn cues_add_second_active_loop_is_a_conflict() {
+    let (db_path, _dir) = common::setup_db().await;
+    let add = |args: &[&str]| {
+        let mut cmd = rbx_cmd(&db_path);
+        cmd.args(["tracks", "cues", "add", "101"])
+            .args(args)
+            .arg("--execute");
+        cmd
+    };
+    add(&["1000", "--out-msec", "2000", "--active"])
+        .assert()
+        .code(0);
+    add(&[
+        "3000",
+        "--kind",
+        "hot",
+        "--slot",
+        "1",
+        "--out-msec",
+        "4000",
+        "--active",
+    ])
+    .assert()
+    .code(0);
+
+    let assert = add(&["5000", "--out-msec", "6000", "--active"])
+        .assert()
+        .code(5);
+    assert_eq!(stdout_json(&assert)["error"]["category"], "conflict");
+    add(&[
+        "7000",
+        "--kind",
+        "hot",
+        "--slot",
+        "2",
+        "--out-msec",
+        "8000",
+        "--active",
+    ])
+    .assert()
+    .code(5);
+
+    let pool = common::open_pool(&db_path).await;
+    let (rows,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM djmdCue WHERE ContentID = '101'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(rows, 2);
+}
+
+/// `--out-msec` at or before the start, `--beats` without `--out-msec`,
+/// or `--active` without `--out-msec` is a usage error.
+#[tokio::test]
+async fn cues_add_bad_loop_flags_are_usage_errors() {
+    let (db_path, _dir) = common::setup_db().await;
+    let cases: [&[&str]; 5] = [
+        &["--out-msec", "1000"],
+        &["--out-msec", "500"],
+        &["--beats", "8"],
+        &["--active"],
+        &["--out-msec", "2000", "--beats", "0"],
+    ];
+    for args in cases {
+        let assert = rbx_cmd(&db_path)
+            .args(["tracks", "cues", "add", "101", "1000"])
+            .args(args)
+            .arg("--execute")
+            .assert()
+            .code(2);
+        assert_eq!(
+            stdout_json(&assert)["error"]["category"],
+            "usage",
+            "{:?}",
+            args
+        );
+    }
+
+    let pool = common::open_pool(&db_path).await;
+    let (rows,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM djmdCue")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(rows, 0);
+}

@@ -163,6 +163,15 @@ pub(crate) enum TrackCuesAction {
         /// Memory cue color: pink, red, orange, yellow, green, aqua, blue or purple
         #[arg(long)]
         color: Option<String>,
+        /// Loop end in milliseconds (makes the cue a loop)
+        #[arg(long)]
+        out_msec: Option<i64>,
+        /// Loop length in beats, e.g. 8 or 1/2 (omit for a loop that is not on beats)
+        #[arg(long)]
+        beats: Option<String>,
+        /// Make the loop active (it loops when the track is loaded)
+        #[arg(long)]
+        active: bool,
         /// Actually apply the change
         #[arg(long)]
         execute: bool,
@@ -180,6 +189,9 @@ pub(crate) enum TrackCuesAction {
         /// Memory cue color: pink, red, orange, yellow, green, aqua, blue, purple, or none
         #[arg(long)]
         color: Option<String>,
+        /// New loop end in milliseconds (loops only)
+        #[arg(long)]
+        out_msec: Option<i64>,
         /// Actually apply the change
         #[arg(long)]
         execute: bool,

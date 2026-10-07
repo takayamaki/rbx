@@ -45,6 +45,21 @@ async fn check_position_format(
     )))
 }
 
+/// BeatLoopSize is the loop length in beats as numerator << 16 | denominator:
+/// 8 beats is 524289, half a beat is 65538.
+fn parse_beats(beats: &str) -> Option<i32> {
+    let (num, den) = beats.split_once('/').unwrap_or((beats, "1"));
+    let (num, den): (i32, i32) = (num.trim().parse().ok()?, den.trim().parse().ok()?);
+    if !(1..=0xFFFF).contains(&num) || !(1..=0xFFFF).contains(&den) {
+        return None;
+    }
+    Some(num << 16 | den)
+}
+
+/// Kind of an active memory loop. Its ActiveLoop column stays 0.
+const ACTIVE_MEMORY_LOOP_KIND: i32 = 4;
+/// Color of every loop rekordbox writes.
+const LOOP_COLOR: i32 = 255;
 /// rekordbox allows at most this many memory cues on one track.
 const MAX_MEMORY_CUES: i64 = 10;
 /// Color of a cue that never had one.
@@ -155,7 +170,7 @@ pub(crate) async fn handle_track_cues(
             }
             match sqlx::query_as::<_, CueRow>(
                 "SELECT ID as id, ContentID as content_id, InMsec as in_msec, \
-                 OutMsec as out_msec, Kind as kind, Color as color, ColorTableIndex as color_table_index, Comment as comment \
+                 OutMsec as out_msec, Kind as kind, Color as color, ColorTableIndex as color_table_index, ActiveLoop as active_loop, BeatLoopSize as beat_loop_size, Comment as comment \
                  FROM djmdCue WHERE ContentID = ? AND rb_local_deleted = 0 \
                  ORDER BY Kind, InMsec",
             )
@@ -180,6 +195,9 @@ pub(crate) async fn handle_track_cues(
             slot,
             comment,
             color,
+            out_msec,
+            beats,
+            active,
             execute,
         } => {
             let cue = NewCue {
@@ -188,6 +206,9 @@ pub(crate) async fn handle_track_cues(
                 slot,
                 comment,
                 color,
+                out_msec,
+                beats,
+                active,
             };
             handle_track_cue_add(pool, &track_id, cue, execute).await
         }
@@ -196,8 +217,17 @@ pub(crate) async fn handle_track_cues(
             msec,
             comment,
             color,
+            out_msec,
             execute,
-        } => handle_track_cue_update(pool, &cue_id, msec, comment, color, execute).await,
+        } => {
+            let change = CueChange {
+                msec,
+                comment,
+                color,
+                out_msec,
+            };
+            handle_track_cue_update(pool, &cue_id, change, execute).await
+        }
         TrackCuesAction::Delete { cue_id, execute } => {
             handle_track_cue_delete(pool, &cue_id, execute).await
         }
@@ -211,6 +241,58 @@ struct NewCue {
     slot: Option<i32>,
     comment: Option<String>,
     color: Option<String>,
+    out_msec: Option<i64>,
+    beats: Option<String>,
+    active: bool,
+}
+
+/// The columns that differ between a plain cue and a loop.
+/// rekordbox writes loops with Color 255, ColorTableIndex 0 (or the hot cue color),
+/// CueMicrosec 0, Comment '' and 0 in ActiveLoop / BeatLoopSize;
+/// plain cues have NULL in those.
+struct CueShape {
+    out_msec: i64,
+    out_frame: i64,
+    color: i32,
+    color_table_index: Option<i32>,
+    active_loop: Option<i32>,
+    beat_loop_size: Option<i32>,
+    cue_microsec: Option<i64>,
+    comment: Option<String>,
+}
+
+impl CueShape {
+    fn new(
+        out_msec: Option<i64>,
+        color: i32,
+        color_table_index: Option<i32>,
+        comment: Option<String>,
+        beat_loop_size: i32,
+    ) -> Self {
+        let comment = comment.filter(|c| !c.is_empty());
+        match out_msec {
+            None => CueShape {
+                out_msec: -1,
+                out_frame: 0,
+                color,
+                color_table_index,
+                active_loop: None,
+                beat_loop_size: None,
+                cue_microsec: None,
+                comment,
+            },
+            Some(out) => CueShape {
+                out_msec: out,
+                out_frame: msec_to_frame(out),
+                color: LOOP_COLOR,
+                color_table_index: Some(color_table_index.unwrap_or(0)),
+                active_loop: Some(0),
+                beat_loop_size: Some(beat_loop_size),
+                cue_microsec: Some(0),
+                comment: Some(comment.unwrap_or_default()),
+            },
+        }
+    }
 }
 
 async fn handle_track_cue_add(
@@ -225,7 +307,26 @@ async fn handle_track_cue_add(
         slot,
         comment,
         color,
+        out_msec,
+        beats,
+        active,
     } = cue;
+    match out_msec {
+        Some(out) if out <= msec => {
+            return usage_error("--out-msec must be after the cue position (msec)")
+        }
+        None if beats.is_some() || active => {
+            return usage_error("--beats and --active need --out-msec: they only apply to loops")
+        }
+        _ => {}
+    }
+    let beat_loop_size = match beats.as_deref().map(parse_beats) {
+        None => 0,
+        Some(Some(v)) => v,
+        Some(None) => {
+            return usage_error("--beats must be a number of beats like 8, or a fraction like 1/2")
+        }
+    };
     let (kind, color) = (kind.as_str(), color.as_deref());
     // Memory cues keep their color in Color, hot cues in ColorTableIndex
     let (color_value, color_table_index) = match color {
@@ -337,7 +438,7 @@ async fn handle_track_cue_add(
 
     if kind_int == 0 {
         let count = sqlx::query_as::<_, (i64,)>(
-            "SELECT COUNT(*) FROM djmdCue WHERE ContentID = ? AND Kind = 0 AND rb_local_deleted = 0",
+            "SELECT COUNT(*) FROM djmdCue WHERE ContentID = ? AND Kind IN (0, 4) AND rb_local_deleted = 0",
         )
         .bind(track_id)
         .fetch_one(pool)
@@ -354,6 +455,44 @@ async fn handle_track_cue_add(
                         ),
                         Some(&format!(
                             "Use 'rbx tracks cues list {}' and delete one first",
+                            track_id
+                        )),
+                    ),
+                    output::EXIT_CONFLICT,
+                )
+            }
+            Ok(_) => {}
+            Err(e) => return db_error(e),
+        }
+    }
+
+    // A track has at most one active memory loop and one active hot cue loop
+    if active {
+        let (sql, what) = if kind_int == 0 {
+            (
+                "SELECT COUNT(*) FROM djmdCue WHERE ContentID = ? AND Kind = 4 AND rb_local_deleted = 0",
+                "an active memory loop",
+            )
+        } else {
+            (
+                "SELECT COUNT(*) FROM djmdCue WHERE ContentID = ? AND Kind NOT IN (0, 4) \
+                 AND ActiveLoop = 1 AND rb_local_deleted = 0",
+                "an active hot cue loop",
+            )
+        };
+        match sqlx::query_as::<_, (i64,)>(sql)
+            .bind(track_id)
+            .fetch_one(pool)
+            .await
+        {
+            Ok((n,)) if n > 0 => {
+                return (
+                    output::error(
+                        "conflict",
+                        output::EXIT_CONFLICT,
+                        &format!("'{}' already has {}", title, what),
+                        Some(&format!(
+                            "Use 'rbx tracks cues list {}' to find it, or add this loop without --active",
                             track_id
                         )),
                     ),
@@ -397,6 +536,25 @@ async fn handle_track_cue_add(
         Ok((u,)) => u,
         Err(e) => return db_error(e),
     };
+    let shape = CueShape::new(
+        out_msec,
+        color_value,
+        color_table_index,
+        comment.clone(),
+        beat_loop_size,
+    );
+    // An active memory loop is Kind 4; an active hot cue loop keeps its Kind and has ActiveLoop 1
+    let (stored_kind, shape) = match (active, kind_int) {
+        (false, _) => (kind_int, shape),
+        (true, 0) => (ACTIVE_MEMORY_LOOP_KIND, shape),
+        (true, _) => (
+            kind_int,
+            CueShape {
+                active_loop: Some(1),
+                ..shape
+            },
+        ),
+    };
     sqlx::query("BEGIN").execute(pool).await.ok();
     let written = sqlx::query(
         "INSERT INTO djmdCue (ID, ContentID, InMsec, InFrame, InMpegFrame, InMpegAbs, \
@@ -404,10 +562,12 @@ async fn handle_track_cue_add(
          ActiveLoop, Comment, BeatLoopSize, CueMicrosec, \
          ContentUUID, UUID, rb_data_status, rb_local_data_status, rb_local_deleted, rb_local_synced, \
          created_at, updated_at) \
-         VALUES (?, ?, ?, ?, 0, 0, -1, 0, 0, 0, ?, ?, ?, NULL, ?, NULL, NULL, ?, ?, 0, 0, 0, 0, ?, ?)"
+         VALUES (?, ?, ?, ?, 0, 0, ?, ?, 0, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, 0, ?, ?)"
     )
     .bind(&new_id).bind(track_id).bind(msec).bind(msec_to_frame(msec))
-    .bind(kind_int).bind(color_value).bind(color_table_index).bind(comment.as_deref().filter(|c| !c.is_empty()))
+    .bind(shape.out_msec).bind(shape.out_frame)
+    .bind(stored_kind).bind(shape.color).bind(shape.color_table_index)
+    .bind(shape.active_loop).bind(&shape.comment).bind(shape.beat_loop_size).bind(shape.cue_microsec)
     .bind(&content_uuid).bind(&new_uuid)
     .bind(&now).bind(&now)
     .execute(pool).await;
@@ -440,17 +600,29 @@ async fn handle_track_cue_add(
     }
 }
 
-async fn handle_track_cue_update(
-    pool: &SqlitePool,
-    cue_id: &str,
+/// The flags of `cues update`.
+struct CueChange {
     msec: Option<i64>,
     comment: Option<String>,
     color: Option<String>,
+    out_msec: Option<i64>,
+}
+
+async fn handle_track_cue_update(
+    pool: &SqlitePool,
+    cue_id: &str,
+    change: CueChange,
     execute: bool,
 ) -> (serde_json::Value, i32) {
+    let CueChange {
+        msec,
+        comment,
+        color,
+        out_msec,
+    } = change;
     let cue = match sqlx::query_as::<_, CueRow>(
         "SELECT ID as id, ContentID as content_id, InMsec as in_msec, \
-         OutMsec as out_msec, Kind as kind, Color as color, ColorTableIndex as color_table_index, Comment as comment \
+         OutMsec as out_msec, Kind as kind, Color as color, ColorTableIndex as color_table_index, ActiveLoop as active_loop, BeatLoopSize as beat_loop_size, Comment as comment \
          FROM djmdCue WHERE ID = ? AND rb_local_deleted = 0",
     )
     .bind(cue_id)
@@ -472,18 +644,21 @@ async fn handle_track_cue_update(
         Err(e) => return db_error(e),
     };
 
-    if msec.is_none() && comment.is_none() && color.is_none() {
+    if out_msec.is_some() && !cue.is_loop() {
+        return usage_error("--out-msec only moves the end of a loop; this cue is not a loop");
+    }
+    if msec.is_none() && comment.is_none() && color.is_none() && out_msec.is_none() {
         return (
             output::error(
                 "usage",
                 output::EXIT_USAGE,
                 "No fields specified to update",
-                Some("Use --msec, --comment or --color"),
+                Some("Use --msec, --comment, --color or --out-msec"),
             ),
             output::EXIT_USAGE,
         );
     }
-    if msec.is_some() {
+    if msec.is_some() || out_msec.is_some() {
         match check_position_format(pool, cue.content_id()).await {
             Ok(Some(refused)) => return refused,
             Ok(None) => {}
@@ -524,6 +699,9 @@ async fn handle_track_cue_update(
     if let Some(ref v) = color {
         changes.insert("color".into(), serde_json::json!(v));
     }
+    if let Some(v) = out_msec {
+        changes.insert("out_msec".into(), serde_json::json!(v));
+    }
 
     let plan = serde_json::json!({
         "action": "update_cue",
@@ -540,7 +718,15 @@ async fn handle_track_cue_update(
 
     let now = now_datetime();
     sqlx::query("BEGIN").execute(pool).await.ok();
-    let written = update_cue_row(pool, cue_id, msec, comment.as_deref(), color_change, &now).await;
+    let written = update_cue_row(
+        pool,
+        cue_id,
+        (msec, out_msec),
+        comment.as_deref(),
+        color_change,
+        &now,
+    )
+    .await;
     let written = match written {
         Ok(_) => content_cue::sync(pool, cue.content_id(), &[cue_id], &now).await,
         Err(e) => Err(e),
@@ -573,11 +759,19 @@ enum ColorChange {
 async fn update_cue_row(
     pool: &SqlitePool,
     cue_id: &str,
-    msec: Option<i64>,
+    (msec, out_msec): (Option<i64>, Option<i64>),
     comment: Option<&str>,
     color: Option<ColorChange>,
     now: &str,
 ) -> Result<(), sqlx::Error> {
+    if let Some(v) = out_msec {
+        sqlx::query("UPDATE djmdCue SET OutMsec = ?, OutFrame = ? WHERE ID = ?")
+            .bind(v)
+            .bind(msec_to_frame(v))
+            .bind(cue_id)
+            .execute(pool)
+            .await?;
+    }
     let color_sql = match color {
         Some(ColorChange::MemoryCue(v)) => Some(("UPDATE djmdCue SET Color = ? WHERE ID = ?", v)),
         Some(ColorChange::HotCue(v)) => {
@@ -618,7 +812,7 @@ async fn handle_track_cue_delete(
 ) -> (serde_json::Value, i32) {
     let cue = match sqlx::query_as::<_, CueRow>(
         "SELECT ID as id, ContentID as content_id, InMsec as in_msec, \
-         OutMsec as out_msec, Kind as kind, Color as color, ColorTableIndex as color_table_index, Comment as comment \
+         OutMsec as out_msec, Kind as kind, Color as color, ColorTableIndex as color_table_index, ActiveLoop as active_loop, BeatLoopSize as beat_loop_size, Comment as comment \
          FROM djmdCue WHERE ID = ? AND rb_local_deleted = 0",
     )
     .bind(cue_id)
@@ -722,6 +916,24 @@ pub(crate) fn describe(action: &str) -> Option<serde_json::Value> {
                     "Memory cue: pink, red, orange, yellow, green, aqua, blue or purple. Hot cue: violet, purple, lavender, slateblue, blue, sky, aqua, teal, emerald, green, lime, olive, yellow, orange, red, deeppink, or 1-16 (position in rekordbox's hot cue color menu, left to right, top to bottom)",
                 ),
                 flag(
+                    "--out-msec",
+                    "integer",
+                    false,
+                    "Loop end in milliseconds. Makes the cue a loop",
+                ),
+                flag(
+                    "--beats",
+                    "string",
+                    false,
+                    "Loop length in beats, e.g. 8 or 1/2 (BeatLoopSize). Omit for a loop that is not on beats",
+                ),
+                flag(
+                    "--active",
+                    "bool",
+                    false,
+                    "Make the loop active. One active memory loop and one active hot cue loop per track. Active hot cue loops do not work on CDJs after export",
+                ),
+                flag(
                     "--execute",
                     "bool",
                     false,
@@ -733,6 +945,7 @@ pub(crate) fn describe(action: &str) -> Option<serde_json::Value> {
                 "rbx tracks cues add TRACK_ID 12345",
                 "rbx tracks cues add TRACK_ID 12345 --color green",
                 "rbx tracks cues add TRACK_ID 12345 --kind hot --slot 1 --color red --comment 'Drop' --execute",
+                "rbx tracks cues add TRACK_ID 104987 --out-msec 109160 --beats 8 --active",
             ],
         ),
         "cues update" => describe_command(
@@ -746,6 +959,12 @@ pub(crate) fn describe(action: &str) -> Option<serde_json::Value> {
                     "string",
                     false,
                     "Memory cue: pink, red, orange, yellow, green, aqua, blue, purple, or none. Hot cue: a hot cue color name, 1-16, or none",
+                ),
+                flag(
+                    "--out-msec",
+                    "integer",
+                    false,
+                    "New loop end in milliseconds (loops only)",
                 ),
                 flag(
                     "--execute",
@@ -787,10 +1006,12 @@ fn cue_schema() -> serde_json::Value {
         "properties": {
             "id": { "type": "string" },
             "track_id": { "type": "string" },
-            "kind": { "type": "string", "enum": ["memory", "hot", "other"] },
+            "kind": { "type": "string", "enum": ["memory", "hot", "other"], "description": "memory includes active memory loops (Kind 4)" },
             "slot": { "type": "integer", "description": "Hot cue slot 1-8 (A-H). Only on hot cues" },
             "in_msec": { "type": "integer|null", "description": "Cue position in milliseconds" },
             "out_msec": { "type": "integer|null", "description": "Loop end in milliseconds, null if not a loop" },
+            "beats": { "type": "string|null", "description": "Loop length in beats (\"8\", \"1/2\"), null if not on beats. Only on loops" },
+            "active": { "type": "boolean", "description": "Whether the loop is active. Only on loops" },
             "color": {
                 "type": "string|null",
                 "description": "Color name (memory cue: pink, red, orange, yellow, green, aqua, blue, purple; hot cue: violet, purple, lavender, slateblue, blue, sky, aqua, teal, emerald, green, lime, olive, yellow, orange, red, deeppink). null for no color",
