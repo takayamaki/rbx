@@ -1,7 +1,10 @@
 pub(crate) mod content_cue;
 pub(crate) mod cues;
+pub(crate) mod grid;
 pub(crate) mod mytags;
 pub(crate) mod update;
+
+use std::path::Path;
 
 use rbx::output;
 use sqlx::sqlite::SqlitePool;
@@ -29,6 +32,7 @@ pub(crate) const TRACK_FILTER_LOCAL: &str = "\
 
 pub(crate) async fn handle_tracks(
     pool: &SqlitePool,
+    db_path: &Path,
     action: TracksAction,
 ) -> (serde_json::Value, i32) {
     match action {
@@ -129,6 +133,7 @@ pub(crate) async fn handle_tracks(
             handle_tracks_bulk_update(pool, &file, execute).await
         }
         TracksAction::Cues { action } => handle_track_cues(pool, action).await,
+        TracksAction::Grid { action } => grid::handle_track_grid(pool, db_path, action).await,
     }
 }
 

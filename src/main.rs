@@ -55,7 +55,7 @@ async fn main() {
     };
 
     let (out, code) = match cli.command {
-        Commands::Tracks { action } => tracks::handle_tracks(&pool, action).await,
+        Commands::Tracks { action } => tracks::handle_tracks(&pool, &db_path, action).await,
         Commands::Playlists { action } => {
             playlists::handle_playlists(&pool, &db_path, action).await
         }

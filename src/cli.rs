@@ -140,6 +140,28 @@ pub(crate) enum TracksAction {
         #[command(subcommand)]
         action: TrackCuesAction,
     },
+    /// Beat grid (in the track's analysis files)
+    Grid {
+        #[command(subcommand)]
+        action: TrackGridAction,
+    },
+}
+
+#[derive(Subcommand)]
+pub(crate) enum TrackGridAction {
+    /// Copy the beat grid (with BPM changes) from one track to another with the same audio (dry-run by default)
+    Copy {
+        /// Track to copy the grid from
+        from: String,
+        /// Track to copy the grid to
+        to: String,
+        /// Shift in ms (from minus to). Default: measured where both grids share a tempo
+        #[arg(long, allow_hyphen_values = true)]
+        offset_ms: Option<i64>,
+        /// Actually apply the change
+        #[arg(long)]
+        execute: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -347,6 +369,9 @@ pub(crate) fn needs_write(cmd: &Commands) -> bool {
                     action: TrackCuesAction::Add { execute: true, .. }
                         | TrackCuesAction::Update { execute: true, .. }
                         | TrackCuesAction::Delete { execute: true, .. },
+                }
+                | TracksAction::Grid {
+                    action: TrackGridAction::Copy { execute: true, .. },
                 }
         } | Commands::Mytags {
             action: MytagsAction::Create { execute: true, .. }
