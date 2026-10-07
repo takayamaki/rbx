@@ -195,6 +195,7 @@ pub(crate) fn describe(action: Option<&str>) -> Option<serde_json::Value> {
             ("cues add", "Add a cue point (dry-run by default)"),
             ("cues update", "Update a cue point (dry-run by default)"),
             ("cues delete", "Delete a cue point (dry-run by default)"),
+            ("grid copy", "Copy a beat grid with BPM changes to a track with the same audio (dry-run by default)"),
             ("mytags list", "List My Tags assigned to a track"),
             ("mytags add", "Add a My Tag to a track (dry-run by default)"),
             ("mytags remove", "Remove a My Tag from a track (dry-run by default)"),
@@ -254,6 +255,7 @@ pub(crate) fn describe(action: Option<&str>) -> Option<serde_json::Value> {
             ],
         ),
         Some(a) if a.starts_with("cues ") => return cues::describe(a),
+        Some("grid copy") => return grid::describe(),
         Some(a) if a.starts_with("mytags ") => return mytags::describe(a),
         _ => return None,
     })

@@ -234,3 +234,39 @@ fn backup_path(path: &Path) -> PathBuf {
     name.push(".rbx-backup");
     PathBuf::from(name)
 }
+
+// --- describe ---
+
+use crate::describe::{describe_command, flag, mutation_result_schema};
+
+pub(crate) fn describe() -> Option<serde_json::Value> {
+    Some(describe_command(
+        "tracks grid copy",
+        &[
+            flag("from", "string", true, "Track to copy the beat grid from"),
+            flag(
+                "to",
+                "string",
+                true,
+                "Track to copy the beat grid to (same audio, e.g. a re-encode)",
+            ),
+            flag(
+                "--offset-ms",
+                "integer",
+                false,
+                "Shift in ms, from minus to. Default: measured where both grids share a tempo",
+            ),
+            flag(
+                "--execute",
+                "bool",
+                false,
+                "Actually apply the change (default: dry-run)",
+            ),
+        ],
+        &mutation_result_schema("tracks.grid.copy"),
+        &[
+            "rbx tracks grid copy MP3_TRACK_ID M4A_TRACK_ID",
+            "rbx tracks grid copy MP3_TRACK_ID M4A_TRACK_ID --offset-ms 7 --execute",
+        ],
+    ))
+}

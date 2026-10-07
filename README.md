@@ -185,6 +185,24 @@ the djmdCue row, the track's `contentCue` row (all its cues as JSON), and `djmdC
 Not supported yet:
 placing cues on mp3 / FLAC files (rekordbox also stores an offset inside the file for those).
 
+### tracks grid
+
+```sh
+rbx tracks grid copy <from_id> <to_id> # copy a beat grid (with BPM changes) to a track with the same audio (dry-run)
+rbx tracks grid copy <from_id> <to_id> --offset-ms 7 --execute
+                                       # shift by 7 ms (from minus to) instead of measuring it
+```
+
+Beat grids are not in master.db.
+They are in the track's analysis files (`<master.db dir>/share` + `djmdContent.AnalysisDataPath`).
+`grid copy` writes the grid to the target's PQTZ (`ANLZ0000.DAT`)
+and removes the target's PQT2 (`ANLZ0000.EXT`), a second form of the grid that is not decoded yet.
+Without PQT2, rekordbox shows the PQTZ grid (checked in rekordbox 7).
+The list BPM (`djmdContent.BPM`) is copied too, because rekordbox does not update it from the grid.
+The offset is the median distance between beats where both grids share a tempo.
+The target's original files are kept next to them as `*.rbx-backup` (the first backup is never replaced).
+Close rekordbox before running it.
+
 ### tracks mytags
 
 ```sh
