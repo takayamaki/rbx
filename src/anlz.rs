@@ -61,6 +61,9 @@ fn u16_at(file: &[u8], at: usize) -> Result<u16, AnlzError> {
 
 /// Splits a file into its sections, after the PMAI header.
 fn sections(file: &[u8]) -> Result<Vec<Section>, AnlzError> {
+    if !file.starts_with(b"PMAI") {
+        return Err(AnlzError("not an ANLZ file (no PMAI header)".into()));
+    }
     let mut at = u32_at(file, 4)? as usize;
     let mut out = Vec::new();
     while at + 12 <= file.len() {

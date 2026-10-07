@@ -97,4 +97,15 @@ fn removes_pqt2_and_keeps_other_tags() {
 
 /// A file that is not an ANLZ file (no PMAI) or has no PQTZ is an error, not a panic.
 #[test]
-fn rejects_files_without_pmai_or_pqtz() {}
+fn rejects_files_without_pmai_or_pqtz() {
+    let no_pqtz = common::anlz_file(&[common::anlz_tag("PPTH", &[0, 0, 0, 4], b"a.mp")]);
+    assert!(anlz::read_beats(&no_pqtz).is_err());
+    assert!(anlz::replace_beats(&no_pqtz, &[]).is_err());
+
+    // Laid out like an ANLZ file, but without the PMAI magic
+    let mut not_anlz = common::anlz_file(&[common::pqtz_tag(&[(1, 12000, 100)])]);
+    not_anlz[..4].copy_from_slice(b"RIFF");
+    assert!(anlz::read_beats(&not_anlz).is_err());
+    assert!(anlz::remove_sections(&not_anlz, b"PQT2").is_err());
+    assert!(anlz::read_beats(&[]).is_err());
+}
