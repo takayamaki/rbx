@@ -28,6 +28,13 @@ struct Section {
     fourcc: [u8; 4],
     start: usize,
     len_header: usize,
+    len_tag: usize,
+}
+
+impl Section {
+    fn bytes<'a>(&self, file: &'a [u8]) -> &'a [u8] {
+        &file[self.start..self.start + self.len_tag]
+    }
 }
 
 fn u32_at(file: &[u8], at: usize) -> Result<u32, AnlzError> {
@@ -68,6 +75,7 @@ fn sections(file: &[u8]) -> Result<Vec<Section>, AnlzError> {
             fourcc,
             start: at,
             len_header,
+            len_tag,
         });
         at += len_tag;
     }
@@ -92,4 +100,42 @@ pub fn read_beats(file: &[u8]) -> Result<Vec<Beat>, AnlzError> {
             })
         })
         .collect()
+}
+
+/// Rebuilds a file section by section. `edit` returns the new bytes of a section,
+/// or None to drop it; the PMAI header is kept and its file length is updated.
+fn rebuild(
+    file: &[u8],
+    mut edit: impl FnMut(&Section, &[u8]) -> Option<Vec<u8>>,
+) -> Result<Vec<u8>, AnlzError> {
+    let header_len = u32_at(file, 4)? as usize;
+    let mut out = file[..header_len].to_vec();
+    for section in sections(file)? {
+        if let Some(bytes) = edit(&section, section.bytes(file)) {
+            out.extend(bytes);
+        }
+    }
+    let len = out.len() as u32;
+    out[8..12].copy_from_slice(&len.to_be_bytes());
+    Ok(out)
+}
+
+/// Writes `beats` as the PQTZ beat grid, keeping every other section byte for byte.
+pub fn replace_beats(file: &[u8], beats: &[Beat]) -> Result<Vec<u8>, AnlzError> {
+    read_beats(file)?;
+    rebuild(file, |section, bytes| {
+        if &section.fourcc != b"PQTZ" {
+            return Some(bytes.to_vec());
+        }
+        let mut tag = bytes[..section.len_header].to_vec();
+        let len_tag = (section.len_header + beats.len() * 8) as u32;
+        tag[8..12].copy_from_slice(&len_tag.to_be_bytes());
+        tag[0x14..0x18].copy_from_slice(&(beats.len() as u32).to_be_bytes());
+        for b in beats {
+            tag.extend(b.beat.to_be_bytes());
+            tag.extend(b.tempo.to_be_bytes());
+            tag.extend(b.ms.to_be_bytes());
+        }
+        Some(tag)
+    })
 }
