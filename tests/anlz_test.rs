@@ -4,12 +4,42 @@
 //! Checked in rekordbox 7: with PQT2 removed, rekordbox shows the PQTZ grid.
 //! Every tag that rbx does not change must stay byte for byte.
 
+mod common;
+
+use rbx::anlz::{self, Beat};
+
 // Order: reading the grid first, then replacing it, then removing PQT2,
 // and broken files last.
 
 /// PQTZ beats come back as (beat 1-4, tempo BPM * 100, time ms), in file order.
 #[test]
-fn reads_pqtz_beats() {}
+fn reads_pqtz_beats() {
+    let file = common::anlz_file(&[
+        common::anlz_tag("PPTH", &[0, 0, 0, 4], b"a.mp"),
+        common::pqtz_tag(&[(1, 11400, 156), (2, 11400, 682), (3, 15600, 1066)]),
+    ]);
+
+    assert_eq!(
+        anlz::read_beats(&file).unwrap(),
+        vec![
+            Beat {
+                beat: 1,
+                tempo: 11400,
+                ms: 156
+            },
+            Beat {
+                beat: 2,
+                tempo: 11400,
+                ms: 682
+            },
+            Beat {
+                beat: 3,
+                tempo: 15600,
+                ms: 1066
+            },
+        ]
+    );
+}
 
 /// Replacing PQTZ writes the new beats and updates the tag length,
 /// the beat count and the file length in the PMAI header.
