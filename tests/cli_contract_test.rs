@@ -2544,11 +2544,47 @@ async fn grid_copy_writes_the_source_grid_shifted_by_the_measured_offset() {
 
 /// Without --execute nothing is written; the plan shows the offset, beat counts and BPM changes.
 #[tokio::test]
-async fn grid_copy_dry_run_writes_nothing() {}
+async fn grid_copy_dry_run_writes_nothing() {
+    let (db_path, _dir) = common::setup_db().await;
+    seed_grids(&db_path, &source_grid(), &target_grid()).await;
+    let dat_before = read_share(&db_path, DST_ANLZ);
+
+    let assert = rbx_cmd(&db_path)
+        .args(["tracks", "grid", "copy", "101", "102"])
+        .assert()
+        .code(0);
+    let json = stdout_json(&assert);
+    assert_eq!(json["dry_run"], true);
+    assert_eq!(json["plan"]["offset_ms"], 7);
+    assert_eq!(json["plan"]["from"]["beats"], 12);
+    assert_eq!(json["plan"]["to"]["beats"], 11);
+
+    assert_eq!(read_share(&db_path, DST_ANLZ), dat_before);
+}
 
 /// --offset-ms overrides the measured offset.
 #[tokio::test]
-async fn grid_copy_offset_ms_overrides_the_measurement() {}
+async fn grid_copy_offset_ms_overrides_the_measurement() {
+    let (db_path, _dir) = common::setup_db().await;
+    seed_grids(&db_path, &source_grid(), &target_grid()).await;
+
+    rbx_cmd(&db_path)
+        .args([
+            "tracks",
+            "grid",
+            "copy",
+            "101",
+            "102",
+            "--offset-ms",
+            "-3",
+            "--execute",
+        ])
+        .assert()
+        .code(0);
+
+    let beats = rbx::anlz::read_beats(&read_share(&db_path, DST_ANLZ)).unwrap();
+    assert_eq!(beats[0].ms, 110, "107 - (-3)");
+}
 
 /// The original .DAT and .EXT of the target are kept next to them before they are changed.
 #[tokio::test]
@@ -2556,8 +2592,28 @@ async fn grid_copy_keeps_a_backup_of_the_original_files() {}
 
 /// When no tempo is shared, the offset cannot be measured and --offset-ms is required.
 #[tokio::test]
-async fn grid_copy_without_a_shared_tempo_needs_offset_ms() {}
+async fn grid_copy_without_a_shared_tempo_needs_offset_ms() {
+    let (db_path, _dir) = common::setup_db().await;
+    let other: Vec<(u16, u16, u32)> = (0..8)
+        .map(|i| ((i % 4) as u16 + 1, 9000, 100 + i * 667))
+        .collect();
+    seed_grids(&db_path, &source_grid(), &other).await;
+
+    let assert = rbx_cmd(&db_path)
+        .args(["tracks", "grid", "copy", "101", "102", "--execute"])
+        .assert()
+        .code(2);
+    assert_eq!(stdout_json(&assert)["error"]["category"], "usage");
+}
 
 /// A track without analysis files is not_found.
 #[tokio::test]
-async fn grid_copy_missing_analysis_file_is_not_found() {}
+async fn grid_copy_missing_analysis_file_is_not_found() {
+    let (db_path, _dir) = common::setup_db().await;
+
+    let assert = rbx_cmd(&db_path)
+        .args(["tracks", "grid", "copy", "101", "102"])
+        .assert()
+        .code(3);
+    assert_eq!(stdout_json(&assert)["error"]["category"], "not_found");
+}
