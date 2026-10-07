@@ -1,0 +1,26 @@
+//! ANLZ analysis file editing (`rbx::anlz`).
+//! rekordbox keeps each track's beat grid in ANLZ0000.DAT (PQTZ) and, for some tracks,
+//! a second form in ANLZ0000.EXT (PQT2) that is not decoded yet.
+//! Checked in rekordbox 7: with PQT2 removed, rekordbox shows the PQTZ grid.
+//! Every tag that rbx does not change must stay byte for byte.
+
+// Order: reading the grid first, then replacing it, then removing PQT2,
+// and broken files last.
+
+/// PQTZ beats come back as (beat 1-4, tempo BPM * 100, time ms), in file order.
+#[test]
+fn reads_pqtz_beats() {}
+
+/// Replacing PQTZ writes the new beats and updates the tag length,
+/// the beat count and the file length in the PMAI header.
+/// The tags before and after it stay byte for byte.
+#[test]
+fn replaces_pqtz_and_updates_lengths() {}
+
+/// Removing PQT2 drops only that tag and updates the file length.
+#[test]
+fn removes_pqt2_and_keeps_other_tags() {}
+
+/// A file that is not an ANLZ file (no PMAI) or has no PQTZ is an error, not a panic.
+#[test]
+fn rejects_files_without_pmai_or_pqtz() {}

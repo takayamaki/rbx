@@ -2415,3 +2415,35 @@ async fn cues_add_bad_loop_flags_are_usage_errors() {
         .unwrap();
     assert_eq!(rows, 0);
 }
+
+// --- tracks grid copy ---
+// Copies a beat grid (including BPM changes) from one track to another with the same audio,
+// e.g. an mp3 and its m4a re-encode. Checked in rekordbox 7 with one pair:
+// PQTZ replaced in the target's .DAT and PQT2 removed from its .EXT shows the copied grid.
+// The list BPM comes from djmdContent.BPM, so it is copied too.
+// Order: the everyday case first, then dry-run, offsets, backups, and errors last.
+
+/// The source grid is written to the target shifted by the offset measured where both
+/// grids share a tempo; the target's PQT2 is removed and its BPM column is copied.
+#[tokio::test]
+async fn grid_copy_writes_the_source_grid_shifted_by_the_measured_offset() {}
+
+/// Without --execute nothing is written; the plan shows the offset, beat counts and BPM changes.
+#[tokio::test]
+async fn grid_copy_dry_run_writes_nothing() {}
+
+/// --offset-ms overrides the measured offset.
+#[tokio::test]
+async fn grid_copy_offset_ms_overrides_the_measurement() {}
+
+/// The original .DAT and .EXT of the target are kept next to them before they are changed.
+#[tokio::test]
+async fn grid_copy_keeps_a_backup_of_the_original_files() {}
+
+/// When no tempo is shared, the offset cannot be measured and --offset-ms is required.
+#[tokio::test]
+async fn grid_copy_without_a_shared_tempo_needs_offset_ms() {}
+
+/// A track without analysis files is not_found.
+#[tokio::test]
+async fn grid_copy_missing_analysis_file_is_not_found() {}

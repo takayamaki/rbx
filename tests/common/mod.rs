@@ -54,7 +54,7 @@ async fn create_schema(pool: &SqlitePool) {
              Length INTEGER, BPM INTEGER, FolderPath TEXT, FileNameL TEXT, FileNameS TEXT, \
              Rating INTEGER, ColorID TEXT, Commnt TEXT, \
              GenreID TEXT, AlbumID TEXT, TrackNo INTEGER, DiscNo INTEGER, ReleaseYear INTEGER, \
-             FileType INTEGER, CueUpdated TEXT, {})",
+             FileType INTEGER, CueUpdated TEXT, AnalysisDataPath TEXT, {})",
             RB_COLUMNS
         ),
         format!(
