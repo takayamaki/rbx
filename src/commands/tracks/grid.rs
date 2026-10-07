@@ -178,6 +178,25 @@ async fn handle_grid_copy(
             )
         }
     };
+    // Keep the files as rekordbox wrote them; a later copy does not replace the first backup
+    let mut backups = Vec::new();
+    for (path, original) in [(&target.dat, &target_dat), (&target.ext, &target_ext)] {
+        let backup = backup_path(path);
+        if !backup.exists() {
+            if let Err(e) = std::fs::write(&backup, original) {
+                return (
+                    output::error(
+                        "general",
+                        output::EXIT_GENERAL,
+                        &format!("Cannot write backup {}: {}", backup.display(), e),
+                        None,
+                    ),
+                    output::EXIT_GENERAL,
+                );
+            }
+        }
+        backups.push(backup.display().to_string());
+    }
     for (path, bytes) in [(&target.dat, &new_dat), (&target.ext, &new_ext)] {
         if let Err(e) = std::fs::write(path, bytes) {
             return (
@@ -201,8 +220,17 @@ async fn handle_grid_copy(
         return db_error(e);
     }
 
+    let mut result = plan;
+    result["backups"] = backups.into();
     (
-        output::mutation_done("tracks.grid.copy", plan),
+        output::mutation_done("tracks.grid.copy", result),
         output::EXIT_OK,
     )
+}
+
+/// ANLZ0000.DAT -> ANLZ0000.DAT.rbx-backup, in the same folder.
+fn backup_path(path: &Path) -> PathBuf {
+    let mut name = path.as_os_str().to_owned();
+    name.push(".rbx-backup");
+    PathBuf::from(name)
 }

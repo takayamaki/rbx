@@ -2588,7 +2588,50 @@ async fn grid_copy_offset_ms_overrides_the_measurement() {
 
 /// The original .DAT and .EXT of the target are kept next to them before they are changed.
 #[tokio::test]
-async fn grid_copy_keeps_a_backup_of_the_original_files() {}
+async fn grid_copy_keeps_a_backup_of_the_original_files() {
+    let (db_path, _dir) = common::setup_db().await;
+    seed_grids(&db_path, &source_grid(), &target_grid()).await;
+    let ext_path = DST_ANLZ.replace("DAT", "EXT");
+    let (dat_before, ext_before) = (
+        read_share(&db_path, DST_ANLZ),
+        read_share(&db_path, &ext_path),
+    );
+
+    let assert = rbx_cmd(&db_path)
+        .args(["tracks", "grid", "copy", "101", "102", "--execute"])
+        .assert()
+        .code(0);
+
+    assert_eq!(
+        read_share(&db_path, &format!("{}.rbx-backup", DST_ANLZ)),
+        dat_before
+    );
+    assert_eq!(
+        read_share(&db_path, &format!("{}.rbx-backup", ext_path)),
+        ext_before
+    );
+    let backups = &stdout_json(&assert)["result"]["backups"];
+    assert_eq!(backups.as_array().unwrap().len(), 2);
+
+    // A second copy keeps the first backup (the files rekordbox wrote), not rbx's output
+    rbx_cmd(&db_path)
+        .args([
+            "tracks",
+            "grid",
+            "copy",
+            "101",
+            "102",
+            "--offset-ms",
+            "0",
+            "--execute",
+        ])
+        .assert()
+        .code(0);
+    assert_eq!(
+        read_share(&db_path, &format!("{}.rbx-backup", DST_ANLZ)),
+        dat_before
+    );
+}
 
 /// When no tempo is shared, the offset cannot be measured and --offset-ms is required.
 #[tokio::test]
