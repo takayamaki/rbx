@@ -60,6 +60,35 @@ enum Source {
     Bytes(Vec<u8>),
 }
 
+/// The zip's entries in rekordbox's order, and what was not found on disk.
+#[derive(Default)]
+struct Plan {
+    entries: Vec<Entry>,
+    missing: Vec<String>,
+}
+
+impl Plan {
+    /// Adds a file, or notes it as missing when it is not on disk.
+    fn file(&mut self, name: &str, path: PathBuf) {
+        if path.is_file() {
+            self.entries.push(Entry {
+                name: name.to_string(),
+                source: Source::File(path),
+            });
+        } else {
+            self.missing.push(name.to_string());
+        }
+    }
+
+    fn summary(&self, out: &Path) -> serde_json::Value {
+        serde_json::json!({
+            "out": out,
+            "entries": self.entries.len(),
+            "missing": self.missing,
+        })
+    }
+}
+
 pub(crate) async fn handle_backup(
     pool: &SqlitePool,
     db_path: &Path,
@@ -67,26 +96,23 @@ pub(crate) async fn handle_backup(
 ) -> (serde_json::Value, i32) {
     match action {
         BackupAction::Create { out, like, execute } => {
-            let entries = match plan(pool, db_path, &like).await {
-                Ok(entries) => entries,
+            let plan = match plan(pool, db_path, &like).await {
+                Ok(plan) => plan,
                 Err(e) => return e,
             };
             if !execute {
                 return (
                     output::mutation_dry_run(
                         "backup.create",
-                        serde_json::json!({ "out": out, "entries": entries.len() }),
+                        plan.summary(&out),
                         "Add --execute to write the zip",
                     ),
                     output::EXIT_OK,
                 );
             }
-            match write_zip(&out, &entries) {
+            match write_zip(&out, &plan.entries) {
                 Ok(()) => (
-                    output::mutation_done(
-                        "backup.create",
-                        serde_json::json!({ "out": out, "entries": entries.len() }),
-                    ),
+                    output::mutation_done("backup.create", plan.summary(&out)),
                     output::EXIT_OK,
                 ),
                 Err(e) => (
@@ -98,48 +124,34 @@ pub(crate) async fn handle_backup(
     }
 }
 
-/// The zip's entries in rekordbox's order.
 async fn plan(
     pool: &SqlitePool,
     db_path: &Path,
     like: &Path,
-) -> Result<Vec<Entry>, (serde_json::Value, i32)> {
+) -> Result<Plan, (serde_json::Value, i32)> {
     let db_dir = db_path.parent().unwrap_or(Path::new("."));
-    let mut entries = vec![Entry {
-        name: "master.db".to_string(),
-        source: Source::File(db_path.to_path_buf()),
-    }];
+    let mut plan = Plan::default();
+    plan.file("master.db", db_path.to_path_buf());
     for name in LIBRARY_FILES {
-        entries.push(Entry {
-            name: name.to_string(),
-            source: Source::File(db_dir.join(name)),
-        });
+        plan.file(name, db_dir.join(name));
     }
     let settings_dir = settings_dir(pool).await?;
     // rekordbox 6 and 7 still keep this one in the older Pioneer/rekordbox dir
-    entries.push(Entry {
-        name: "playlists3.sync".to_string(),
-        source: Source::File(
-            settings_dir
-                .parent()
-                .unwrap_or(Path::new("."))
-                .join("rekordbox")
-                .join("playlists3.sync"),
-        ),
-    });
+    let older = settings_dir
+        .parent()
+        .unwrap_or(Path::new("."))
+        .join("rekordbox");
+    plan.file("playlists3.sync", older.join("playlists3.sync"));
     for name in SETTINGS_FILES {
-        entries.push(Entry {
-            name: name.to_string(),
-            source: Source::File(settings_dir.join(name)),
-        });
+        plan.file(name, settings_dir.join(name));
     }
-    entries.extend(track_folders(pool, db_dir).await?);
-    entries.extend(key_mappings(&settings_dir));
-    entries.push(Entry {
+    track_folders(pool, db_dir, &mut plan).await?;
+    plan.entries.extend(key_mappings(&settings_dir));
+    plan.entries.push(Entry {
         name: "contents.xml".to_string(),
         source: Source::Bytes(contents_xml(pool, like).await?.into_bytes()),
     });
-    Ok(entries)
+    Ok(plan)
 }
 
 /// rekordbox's keyboard mappings (rekordbox_*.mappings), by name.
@@ -218,7 +230,8 @@ fn read_like(like: &Path) -> Result<String, Box<dyn std::error::Error>> {
 async fn track_folders(
     pool: &SqlitePool,
     db_dir: &Path,
-) -> Result<Vec<Entry>, (serde_json::Value, i32)> {
+    plan: &mut Plan,
+) -> Result<(), (serde_json::Value, i32)> {
     let rows = sqlx::query_as::<_, (Option<String>, Option<String>)>(
         "SELECT AnalysisDataPath, ImagePath FROM djmdContent \
          WHERE rb_local_deleted = 0 ORDER BY rowid",
@@ -228,7 +241,6 @@ async fn track_folders(
     .map_err(db_error)?;
     let share = db_dir.join("share");
     let mut seen = std::collections::HashSet::new();
-    let mut entries = Vec::new();
     for path in rows
         .into_iter()
         .flat_map(|(anlz, image)| [anlz, image])
@@ -241,6 +253,7 @@ async fn track_folders(
             continue;
         }
         let Ok(dir) = std::fs::read_dir(share.join(folder)) else {
+            plan.missing.push(format!("share/{}", folder));
             continue;
         };
         let mut files: Vec<String> = dir
@@ -253,13 +266,13 @@ async fn track_folders(
             (rank.unwrap_or(FOLDER_ORDER.len()), f.clone())
         });
         for file in files {
-            entries.push(Entry {
+            plan.entries.push(Entry {
                 name: format!("share/{}/{}", folder, file),
                 source: Source::File(share.join(folder).join(&file)),
             });
         }
     }
-    Ok(entries)
+    Ok(())
 }
 
 /// rekordbox records its settings dir in agentRegistry.

@@ -376,10 +376,32 @@ mod create {
         assert!(names[n - 4].starts_with("share/"));
     }
 
+    /// rekordbox's own backup skipped 14 artwork folders that tracks named but were gone.
     #[tokio::test]
-    #[ignore = "todo"]
     async fn reports_files_and_folders_that_are_missing_on_disk() {
-        todo!()
+        let lib = library().await;
+        std::fs::remove_file(lib.settings.join("DEVSETTING.DAT")).unwrap();
+        let pool = crate::common::open_pool(&lib.db).await;
+        sqlx::query("UPDATE djmdContent SET AnalysisDataPath = ?, ImagePath = ? WHERE ID = '101'")
+            .bind("/PIONEER/USBANLZ/aaa/gone/ANLZ0000.DAT")
+            .bind("/PIONEER/Artwork/aaa/gone/artwork.jpg")
+            .execute(&pool)
+            .await
+            .unwrap();
+        pool.close().await;
+
+        let assert = create(&lib).assert().code(0);
+
+        let json: serde_json::Value = serde_json::from_slice(&assert.get_output().stdout).unwrap();
+        assert_eq!(
+            json["result"]["missing"],
+            serde_json::json!([
+                "DEVSETTING.DAT",
+                "share/PIONEER/USBANLZ/aaa/gone",
+                "share/PIONEER/Artwork/aaa/gone",
+            ])
+        );
+        assert!(!zip_names(&lib.out).contains(&"DEVSETTING.DAT".to_string()));
     }
 
     #[tokio::test]
