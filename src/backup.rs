@@ -94,3 +94,58 @@ fn escape(value: &str) -> String {
         .replace('>', "&gt;")
         .replace('"', "&quot;")
 }
+
+/// Where a path from rekordbox (agentRegistry) is on this computer.
+/// db_windows_dir is master.db's dir as rekordbox sees it, db_local_dir as rbx opens it.
+pub fn local_path(
+    path: &str,
+    db_windows_dir: &str,
+    db_local_dir: &std::path::Path,
+) -> Result<std::path::PathBuf, String> {
+    let (Some(drive), Some(db_drive)) = (windows_drive(path), windows_drive(db_windows_dir)) else {
+        return Ok(std::path::PathBuf::from(path));
+    };
+    let unmatched = || {
+        format!(
+            "{} is not where {} is mounted",
+            db_local_dir.display(),
+            db_windows_dir
+        )
+    };
+    // "/mnt/f/PIONEER/Master" minus "PIONEER/Master" is the db drive's mount, "/mnt/f"
+    let db_rest = windows_rest(db_windows_dir);
+    let local = db_local_dir.to_str().ok_or_else(unmatched)?;
+    let mount = local
+        .trim_end_matches('/')
+        .strip_suffix(db_rest.trim_matches('/'))
+        .ok_or_else(unmatched)?
+        .trim_end_matches('/');
+    let (root, drive_dir) = mount.rsplit_once('/').ok_or_else(unmatched)?;
+    if !drive_dir.eq_ignore_ascii_case(&db_drive.to_string()) {
+        return Err(unmatched());
+    }
+    // the mount names drives in the same case as the db drive's ("f" → "c")
+    let drive_dir = if drive_dir.chars().all(|c| c.is_ascii_lowercase()) {
+        drive.to_ascii_lowercase()
+    } else {
+        drive.to_ascii_uppercase()
+    };
+    Ok(std::path::PathBuf::from(format!(
+        "{}/{}{}",
+        root,
+        drive_dir,
+        windows_rest(path)
+    )))
+}
+
+/// The drive letter of a Windows path (`F:\…` → `F`).
+fn windows_drive(path: &str) -> Option<char> {
+    let mut chars = path.chars();
+    let drive = chars.next().filter(char::is_ascii_alphabetic)?;
+    (chars.next() == Some(':')).then_some(drive)
+}
+
+/// A Windows path after its drive, with "/" separators (`F:\PIONEER\Master` → `/PIONEER/Master`).
+fn windows_rest(path: &str) -> String {
+    path[2..].replace('\\', "/")
+}

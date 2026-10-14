@@ -524,10 +524,25 @@ mod directory_array {
 }
 
 mod local_path {
+    use std::path::{Path, PathBuf};
+
+    use rbx::backup::local_path;
+
+    /// agentRegistry has Windows paths. Under WSL, master.db at F:\PIONEER\Master
+    /// is opened as /mnt/f/PIONEER/Master/master.db, which tells where drives are mounted.
     #[test]
-    #[ignore = "todo"]
     fn maps_a_windows_path_through_the_mount_the_db_drive_uses() {
-        todo!()
+        let path = local_path(
+            r"C:\Users\dj\AppData\Roaming\Pioneer\rekordbox6",
+            r"F:\PIONEER\Master",
+            Path::new("/mnt/windows/f/PIONEER/Master"),
+        );
+        assert_eq!(
+            path,
+            Ok(PathBuf::from(
+                "/mnt/windows/c/Users/dj/AppData/Roaming/Pioneer/rekordbox6"
+            ))
+        );
     }
 
     #[test]
