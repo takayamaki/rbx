@@ -268,6 +268,52 @@ mod create {
         }
     }
 
+    /// Some analysis folders hold ANLZ0001.* instead of ANLZ0000.*; the order is by kind all the same.
+    #[tokio::test]
+    async fn orders_analysis_files_by_kind_whatever_their_number() {
+        let lib = library().await;
+        let folder = lib
+            .db
+            .parent()
+            .unwrap()
+            .join("share/PIONEER/USBANLZ/2d4/475e9");
+        std::fs::create_dir_all(&folder).unwrap();
+        for file in [
+            "ANLZ0001.2EX",
+            "ANLZ0001.3EX",
+            "ANLZ0001.DAT",
+            "ANLZ0001.EXT",
+        ] {
+            std::fs::write(folder.join(file), file).unwrap();
+        }
+        let pool = crate::common::open_pool(&lib.db).await;
+        sqlx::query("UPDATE djmdContent SET AnalysisDataPath = ? WHERE ID = '101'")
+            .bind("/PIONEER/USBANLZ/2d4/475e9/ANLZ0001.DAT")
+            .execute(&pool)
+            .await
+            .unwrap();
+        pool.close().await;
+
+        create(&lib).assert().code(0);
+
+        let names: Vec<String> = zip_names(&lib.out)
+            .into_iter()
+            .filter_map(|n| {
+                n.strip_prefix("share/PIONEER/USBANLZ/2d4/475e9/")
+                    .map(String::from)
+            })
+            .collect();
+        assert_eq!(
+            names,
+            [
+                "ANLZ0001.DAT",
+                "ANLZ0001.EXT",
+                "ANLZ0001.2EX",
+                "ANLZ0001.3EX"
+            ]
+        );
+    }
+
     #[tokio::test]
     async fn writes_contents_xml_from_the_like_backup_with_the_library_values_recomputed() {
         let lib = library().await;

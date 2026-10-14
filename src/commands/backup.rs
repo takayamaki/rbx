@@ -38,15 +38,16 @@ const SETTINGS_FILES: [&str; 13] = [
     "cue_personal_trend.json",
 ];
 
-/// rekordbox's order for the files in one analysis or artwork folder. Other files follow by name.
+/// rekordbox's order for the files in one analysis or artwork folder, by name ending.
+/// Analysis files are ANLZ0000.* or ANLZ0001.*. Other files follow by name.
 const FOLDER_ORDER: [&str; 7] = [
-    "ANLZ0000.DAT",
-    "ANLZ0000.EXT",
-    "ANLZ0000.2EX",
-    "ANLZ0000.3EX",
-    "artwork.jpg",
-    "artwork_s.jpg",
-    "artwork_m.jpg",
+    ".DAT",
+    ".EXT",
+    ".2EX",
+    ".3EX",
+    "/artwork.jpg",
+    "/artwork_s.jpg",
+    "/artwork_m.jpg",
 ];
 
 /// One file in the zip: its name there and where its bytes come from.
@@ -301,7 +302,9 @@ async fn track_folders(
             .map(|f| f.file_name().to_string_lossy().into_owned())
             .collect();
         files.sort_by_key(|f| {
-            let rank = FOLDER_ORDER.iter().position(|o| o == f);
+            let rank = FOLDER_ORDER
+                .iter()
+                .position(|o| format!("/{}", f).ends_with(o));
             (rank.unwrap_or(FOLDER_ORDER.len()), f.clone())
         });
         for file in files {
