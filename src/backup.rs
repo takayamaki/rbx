@@ -56,6 +56,37 @@ pub fn db_id(dbid: &str) -> Option<i32> {
     dbid.parse::<u32>().ok().map(|n| n as i32)
 }
 
+/// A VALUE in contents.xml.
+pub fn manifest_value(manifest: &str, name: &str) -> Option<String> {
+    let head = format!("<VALUE name=\"{}\" val=\"", name);
+    let start = manifest.find(&head)? + head.len();
+    let len = manifest[start..].find('"')?;
+    Some(unescape(&manifest[start..start + len]))
+}
+
+/// The user folders (userMusicDirectory and so on) in contents.xml, for directory_array.
+pub fn user_dirs(manifest: &str) -> Vec<String> {
+    let mut dirs = Vec::new();
+    let mut rest = manifest;
+    while let Some(i) = rest.find("<VALUE name=\"user") {
+        rest = &rest[i + "<VALUE name=\"".len()..];
+        let Some(end) = rest.find('"') else { break };
+        let name = &rest[..end];
+        if name.ends_with("Directory") {
+            dirs.extend(manifest_value(manifest, name));
+        }
+    }
+    dirs
+}
+
+fn unescape(value: &str) -> String {
+    value
+        .replace("&quot;", "\"")
+        .replace("&gt;", ">")
+        .replace("&lt;", "<")
+        .replace("&amp;", "&")
+}
+
 fn escape(value: &str) -> String {
     value
         .replace('&', "&amp;")

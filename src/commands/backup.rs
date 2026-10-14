@@ -2,10 +2,10 @@
 //! from Preferences → Advanced → Database → Library backup.
 
 use std::fs::File;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
-use rbx::output;
+use rbx::{backup, output};
 use sqlx::sqlite::SqlitePool;
 use zip::write::SimpleFileOptions;
 
@@ -49,10 +49,15 @@ const FOLDER_ORDER: [&str; 7] = [
     "artwork_m.jpg",
 ];
 
-/// One file in the zip: its name there and where it is read from.
+/// One file in the zip: its name there and where its bytes come from.
 struct Entry {
     name: String,
-    source: PathBuf,
+    source: Source,
+}
+
+enum Source {
+    File(PathBuf),
+    Bytes(Vec<u8>),
 }
 
 pub(crate) async fn handle_backup(
@@ -61,8 +66,8 @@ pub(crate) async fn handle_backup(
     action: BackupAction,
 ) -> (serde_json::Value, i32) {
     match action {
-        BackupAction::Create { out, execute, .. } => {
-            let entries = match plan(pool, db_path).await {
+        BackupAction::Create { out, like, execute } => {
+            let entries = match plan(pool, db_path, &like).await {
                 Ok(entries) => entries,
                 Err(e) => return e,
             };
@@ -94,27 +99,83 @@ pub(crate) async fn handle_backup(
 }
 
 /// The zip's entries in rekordbox's order.
-async fn plan(pool: &SqlitePool, db_path: &Path) -> Result<Vec<Entry>, (serde_json::Value, i32)> {
+async fn plan(
+    pool: &SqlitePool,
+    db_path: &Path,
+    like: &Path,
+) -> Result<Vec<Entry>, (serde_json::Value, i32)> {
     let db_dir = db_path.parent().unwrap_or(Path::new("."));
     let mut entries = vec![Entry {
         name: "master.db".to_string(),
-        source: db_path.to_path_buf(),
+        source: Source::File(db_path.to_path_buf()),
     }];
     for name in LIBRARY_FILES {
         entries.push(Entry {
             name: name.to_string(),
-            source: db_dir.join(name),
+            source: Source::File(db_dir.join(name)),
         });
     }
     let settings_dir = settings_dir(pool).await?;
     for name in SETTINGS_FILES {
         entries.push(Entry {
             name: name.to_string(),
-            source: settings_dir.join(name),
+            source: Source::File(settings_dir.join(name)),
         });
     }
     entries.extend(track_folders(pool, db_dir).await?);
+    entries.push(Entry {
+        name: "contents.xml".to_string(),
+        source: Source::Bytes(contents_xml(pool, like).await?.into_bytes()),
+    });
     Ok(entries)
+}
+
+/// contents.xml: the one in the --like backup, with the library values recomputed.
+async fn contents_xml(pool: &SqlitePool, like: &Path) -> Result<String, (serde_json::Value, i32)> {
+    let template = read_like(like).map_err(|e| {
+        (
+            output::error(
+                "config",
+                output::EXIT_CONFIG,
+                &format!("Cannot read contents.xml in {}: {}", like.display(), e),
+                Some("Pass a backup zip made by rekordbox with --like"),
+            ),
+            output::EXIT_CONFIG,
+        )
+    })?;
+    let (dbid,) = sqlx::query_as::<_, (String,)>("SELECT DBID FROM djmdProperty")
+        .fetch_one(pool)
+        .await
+        .map_err(db_error)?;
+    let paths = sqlx::query_as::<_, (Option<String>,)>(
+        "SELECT FolderPath FROM djmdContent WHERE rb_local_deleted = 0 ORDER BY rowid",
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(db_error)?;
+    let paths: Vec<String> = paths.into_iter().filter_map(|(p,)| p).collect();
+    let content_num = paths.iter().filter(|p| backup::is_local_file(p)).count();
+    let user_dirs = backup::user_dirs(&template);
+    let user_dirs: Vec<&str> = user_dirs.iter().map(String::as_str).collect();
+    let roots = backup::directory_array(paths.iter().map(String::as_str), &user_dirs);
+    Ok(backup::manifest(
+        &template,
+        &[
+            (
+                "DB_ID",
+                backup::db_id(&dbid).unwrap_or_default().to_string(),
+            ),
+            ("CONTENT_NUM", content_num.to_string()),
+            ("DIRECTORY_ARRAY", roots.join(",")),
+        ],
+    ))
+}
+
+fn read_like(like: &Path) -> Result<String, Box<dyn std::error::Error>> {
+    let mut zip = zip::ZipArchive::new(File::open(like)?)?;
+    let mut template = String::new();
+    zip.by_name("contents.xml")?.read_to_string(&mut template)?;
+    Ok(template)
 }
 
 /// The analysis and artwork folders that tracks refer to, track by track.
@@ -160,7 +221,7 @@ async fn track_folders(
         for file in files {
             entries.push(Entry {
                 name: format!("share/{}/{}", folder, file),
-                source: share.join(folder).join(&file),
+                source: Source::File(share.join(folder).join(&file)),
             });
         }
     }
@@ -194,7 +255,10 @@ fn write_zip(out: &Path, entries: &[Entry]) -> Result<(), Box<dyn std::error::Er
     let options = SimpleFileOptions::default();
     for entry in entries {
         zip.start_file(entry.name.as_str(), options)?;
-        zip.write_all(&std::fs::read(&entry.source)?)?;
+        match &entry.source {
+            Source::File(path) => zip.write_all(&std::fs::read(path)?)?,
+            Source::Bytes(bytes) => zip.write_all(bytes)?,
+        }
     }
     zip.finish()?;
     Ok(())

@@ -258,9 +258,34 @@ mod create {
     }
 
     #[tokio::test]
-    #[ignore = "todo"]
     async fn writes_contents_xml_from_the_like_backup_with_the_library_values_recomputed() {
-        todo!()
+        let lib = library().await;
+        let pool = crate::common::open_pool(&lib.db).await;
+        for (id, path) in [("103", "F:/DJ/03.m4a"), ("104", "spotify:track:0")] {
+            sqlx::query("INSERT INTO djmdContent (ID, FolderPath) VALUES (?, ?)")
+                .bind(id)
+                .bind(path)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+        pool.close().await;
+
+        create(&lib).assert().code(0);
+
+        let names = zip_names(&lib.out);
+        assert_eq!(names.last().unwrap(), "contents.xml");
+        let expected = LIKE_CONTENTS_XML
+            .replace("\"DB_ID\" val=\"1\"", "\"DB_ID\" val=\"-1095663931\"")
+            .replace("\"CONTENT_NUM\" val=\"0\"", "\"CONTENT_NUM\" val=\"3\"")
+            .replace(
+                "\"DIRECTORY_ARRAY\" val=\"\"",
+                "\"DIRECTORY_ARRAY\" val=\"C:/Music,F:\"",
+            );
+        assert_eq!(
+            String::from_utf8(zip_read(&lib.out, "contents.xml")).unwrap(),
+            expected
+        );
     }
 
     #[tokio::test]
