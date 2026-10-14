@@ -248,8 +248,14 @@ mod create {
     #[tokio::test]
     async fn zips_the_analysis_and_artwork_folders_that_tracks_refer_to() {
         let lib = library().await;
-        let mut expected = add_track_files(&lib.db, "101", "e01/39bfa-1560").await;
-        expected.extend(add_track_files(&lib.db, "102", "5f7/75f48-01aa").await);
+        let first = add_track_files(&lib.db, "101", "e01/39bfa-1560").await;
+        let second = add_track_files(&lib.db, "102", "5f7/75f48-01aa").await;
+        // rekordbox: the analysis folders of all tracks, then their artwork folders
+        let (anlz, artwork): (Vec<String>, Vec<String>) = first
+            .into_iter()
+            .chain(second)
+            .partition(|n| n.contains("/USBANLZ/"));
+        let expected: Vec<String> = anlz.into_iter().chain(artwork).collect();
 
         create(&lib).assert().code(0);
 

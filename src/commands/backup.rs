@@ -261,7 +261,7 @@ fn read_like(like: &Path) -> Result<String, Box<dyn std::error::Error>> {
     Ok(template)
 }
 
-/// The analysis and artwork folders that tracks refer to, track by track.
+/// The analysis and artwork folders that tracks refer to.
 /// Their paths are relative to <master.db dir>/share.
 /// Folders no track refers to are left out, as rekordbox does.
 async fn track_folders(
@@ -278,11 +278,9 @@ async fn track_folders(
     .map_err(db_error)?;
     let share = db_dir.join("share");
     let mut seen = std::collections::HashSet::new();
-    for path in rows
-        .into_iter()
-        .flat_map(|(anlz, image)| [anlz, image])
-        .flatten()
-    {
+    // all the analysis folders first, then all the artwork folders, both in track order
+    let (anlz, artwork): (Vec<_>, Vec<_>) = rows.into_iter().unzip();
+    for path in anlz.into_iter().chain(artwork).flatten() {
         let Some((folder, _)) = path.trim_start_matches('/').rsplit_once('/') else {
             continue;
         };
