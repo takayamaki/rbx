@@ -421,9 +421,15 @@ mod create {
     }
 
     #[tokio::test]
-    #[ignore = "todo"]
     async fn refuses_to_overwrite_an_existing_file() {
-        todo!()
+        let lib = library().await;
+        std::fs::write(&lib.out, "an older backup").unwrap();
+
+        let assert = create(&lib).assert().code(5);
+
+        let json: serde_json::Value = serde_json::from_slice(&assert.get_output().stdout).unwrap();
+        assert_eq!(json["error"]["category"], "conflict");
+        assert_eq!(std::fs::read(&lib.out).unwrap(), b"an older backup");
     }
 
     #[tokio::test]

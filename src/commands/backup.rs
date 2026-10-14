@@ -101,6 +101,17 @@ pub(crate) async fn handle_backup(
             settings_dir,
             execute,
         } => {
+            if out.exists() {
+                return (
+                    output::error(
+                        "conflict",
+                        output::EXIT_CONFLICT,
+                        &format!("{} already exists", out.display()),
+                        Some("Choose another file name, or move the old backup away"),
+                    ),
+                    output::EXIT_CONFLICT,
+                );
+            }
             let plan = match plan(pool, db_path, &like, settings_dir).await {
                 Ok(plan) => plan,
                 Err(e) => return e,
@@ -307,7 +318,7 @@ async fn registry_settings_dir(pool: &SqlitePool) -> Result<PathBuf, (serde_json
 }
 
 fn write_zip(out: &Path, entries: &[Entry]) -> Result<(), Box<dyn std::error::Error>> {
-    let mut zip = zip::ZipWriter::new(File::create(out)?);
+    let mut zip = zip::ZipWriter::new(File::create_new(out)?);
     for entry in entries {
         let modified = match &entry.source {
             Source::File(path) => std::fs::metadata(path)?.modified()?.into(),
