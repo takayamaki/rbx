@@ -335,10 +335,19 @@ mod directory_array {
         assert_eq!(directory_array(paths, &USER_DIRS), ["F:", "D:"]);
     }
 
+    /// rekordbox lists the roots in djmdContent row order.
     #[test]
-    #[ignore = "todo"]
     fn lists_roots_in_the_order_they_first_appear() {
-        todo!()
+        let paths = [
+            "F:/DJ/01.m4a",
+            "D:/My Music/02.m4a",
+            "F:/DJ/03.m4a",
+            "C:/Users/dj/04.mp3",
+        ];
+        assert_eq!(
+            directory_array(paths, &USER_DIRS),
+            ["F:", "D:/My Music", "C:/Users/dj"]
+        );
     }
 
     #[test]
