@@ -38,6 +38,17 @@ const SETTINGS_FILES: [&str; 13] = [
     "cue_personal_trend.json",
 ];
 
+/// rekordbox's order for the files in one analysis or artwork folder. Other files follow by name.
+const FOLDER_ORDER: [&str; 7] = [
+    "ANLZ0000.DAT",
+    "ANLZ0000.EXT",
+    "ANLZ0000.2EX",
+    "ANLZ0000.3EX",
+    "artwork.jpg",
+    "artwork_s.jpg",
+    "artwork_m.jpg",
+];
+
 /// One file in the zip: its name there and where it is read from.
 struct Entry {
     name: String,
@@ -101,6 +112,57 @@ async fn plan(pool: &SqlitePool, db_path: &Path) -> Result<Vec<Entry>, (serde_js
             name: name.to_string(),
             source: settings_dir.join(name),
         });
+    }
+    entries.extend(track_folders(pool, db_dir).await?);
+    Ok(entries)
+}
+
+/// The analysis and artwork folders that tracks refer to, track by track.
+/// Their paths are relative to <master.db dir>/share.
+/// Folders no track refers to are left out, as rekordbox does.
+async fn track_folders(
+    pool: &SqlitePool,
+    db_dir: &Path,
+) -> Result<Vec<Entry>, (serde_json::Value, i32)> {
+    let rows = sqlx::query_as::<_, (Option<String>, Option<String>)>(
+        "SELECT AnalysisDataPath, ImagePath FROM djmdContent \
+         WHERE rb_local_deleted = 0 ORDER BY rowid",
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(db_error)?;
+    let share = db_dir.join("share");
+    let mut seen = std::collections::HashSet::new();
+    let mut entries = Vec::new();
+    for path in rows
+        .into_iter()
+        .flat_map(|(anlz, image)| [anlz, image])
+        .flatten()
+    {
+        let Some((folder, _)) = path.trim_start_matches('/').rsplit_once('/') else {
+            continue;
+        };
+        if !seen.insert(folder.to_string()) {
+            continue;
+        }
+        let Ok(dir) = std::fs::read_dir(share.join(folder)) else {
+            continue;
+        };
+        let mut files: Vec<String> = dir
+            .flatten()
+            .filter(|f| f.file_type().is_ok_and(|t| t.is_file()))
+            .map(|f| f.file_name().to_string_lossy().into_owned())
+            .collect();
+        files.sort_by_key(|f| {
+            let rank = FOLDER_ORDER.iter().position(|o| o == f);
+            (rank.unwrap_or(FOLDER_ORDER.len()), f.clone())
+        });
+        for file in files {
+            entries.push(Entry {
+                name: format!("share/{}/{}", folder, file),
+                source: share.join(folder).join(&file),
+            });
+        }
     }
     Ok(entries)
 }

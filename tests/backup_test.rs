@@ -88,6 +88,36 @@ mod fixture {
         }
     }
 
+    /// Gives a track analysis and artwork folders under <db dir>/share, like rekordbox does.
+    pub async fn add_track_files(db: &Path, track_id: &str, folder: &str) -> Vec<String> {
+        let share = db.parent().unwrap().join("share");
+        let mut names = Vec::new();
+        for (kind, files) in [
+            ("USBANLZ", ["ANLZ0000.DAT", "ANLZ0000.EXT", "ANLZ0000.2EX"]),
+            ("Artwork", ["artwork.jpg", "artwork_s.jpg", "artwork_m.jpg"]),
+        ] {
+            let dir = share.join("PIONEER").join(kind).join(folder);
+            std::fs::create_dir_all(&dir).unwrap();
+            // written in reverse, so the zip order cannot come from the creation order
+            for file in files.iter().rev() {
+                std::fs::write(dir.join(file), format!("{} {}", folder, file)).unwrap();
+            }
+            for file in files {
+                names.push(format!("share/PIONEER/{}/{}/{}", kind, folder, file));
+            }
+        }
+        let pool = crate::common::open_pool(db).await;
+        sqlx::query("UPDATE djmdContent SET AnalysisDataPath = ?, ImagePath = ? WHERE ID = ?")
+            .bind(format!("/PIONEER/USBANLZ/{}/ANLZ0000.DAT", folder))
+            .bind(format!("/PIONEER/Artwork/{}/artwork.jpg", folder))
+            .bind(track_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        pool.close().await;
+        names
+    }
+
     pub async fn set_registry(db: &Path, registry_id: &str, value: &str) {
         let pool = crate::common::open_pool(db).await;
         sqlx::query(
@@ -211,9 +241,20 @@ mod create {
     }
 
     #[tokio::test]
-    #[ignore = "todo"]
     async fn zips_the_analysis_and_artwork_folders_that_tracks_refer_to() {
-        todo!()
+        let lib = library().await;
+        let mut expected = add_track_files(&lib.db, "101", "e01/39bfa-1560").await;
+        expected.extend(add_track_files(&lib.db, "102", "5f7/75f48-01aa").await);
+
+        create(&lib).assert().code(0);
+
+        let names = zip_names(&lib.out);
+        let share: Vec<&String> = names.iter().filter(|n| n.starts_with("share/")).collect();
+        assert_eq!(share, expected.iter().collect::<Vec<_>>());
+        for name in &expected {
+            let body = String::from_utf8(zip_read(&lib.out, name)).unwrap();
+            assert!(name.ends_with(body.split(' ').nth(1).unwrap()));
+        }
     }
 
     #[tokio::test]
