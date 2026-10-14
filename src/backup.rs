@@ -9,7 +9,11 @@ pub fn directory_array<'a>(
 ) -> Vec<String> {
     let mut roots: Vec<String> = Vec::new();
     for path in paths {
-        let root = match user_dirs.iter().find(|d| path.starts_with(*d)) {
+        let root = user_dirs
+            .iter()
+            .filter(|d| path.starts_with(*d))
+            .max_by_key(|d| d.len());
+        let root = match root {
             Some(dir) => dir.to_string(),
             None => path[..2].to_string(),
         };

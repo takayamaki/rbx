@@ -351,9 +351,10 @@ mod directory_array {
     }
 
     #[test]
-    #[ignore = "todo"]
     fn the_longest_matching_user_directory_wins() {
-        todo!()
+        let user_dirs = ["C:/Users/dj", "C:/Users/dj/Music"];
+        let paths = ["C:/Users/dj/Music/01.mp3"];
+        assert_eq!(directory_array(paths, &user_dirs), ["C:/Users/dj/Music"]);
     }
 
     #[test]
