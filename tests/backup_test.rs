@@ -304,10 +304,30 @@ mod create {
         }
     }
 
+    /// Zip times are local time, as rekordbox writes them.
     #[tokio::test]
-    #[ignore = "todo"]
     async fn keeps_file_modification_times() {
-        todo!()
+        let lib = library().await;
+        let path = lib.db.parent().unwrap().join("smartlist.xml");
+        let mtime = chrono::NaiveDate::from_ymd_opt(2026, 8, 11)
+            .unwrap()
+            .and_hms_opt(20, 18, 34)
+            .unwrap();
+        let system_time: std::time::SystemTime =
+            mtime.and_local_timezone(chrono::Local).unwrap().into();
+        std::fs::File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(system_time)
+            .unwrap();
+
+        create(&lib).assert().code(0);
+
+        let mut zip = zip::ZipArchive::new(std::fs::File::open(&lib.out).unwrap()).unwrap();
+        let entry = zip.by_name("smartlist.xml").unwrap();
+        let zipped = chrono::NaiveDateTime::try_from(entry.last_modified().unwrap()).unwrap();
+        assert_eq!(zipped, mtime);
     }
 
     #[tokio::test]

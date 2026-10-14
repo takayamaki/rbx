@@ -252,8 +252,14 @@ async fn settings_dir(pool: &SqlitePool) -> Result<PathBuf, (serde_json::Value, 
 
 fn write_zip(out: &Path, entries: &[Entry]) -> Result<(), Box<dyn std::error::Error>> {
     let mut zip = zip::ZipWriter::new(File::create(out)?);
-    let options = SimpleFileOptions::default();
     for entry in entries {
+        let modified = match &entry.source {
+            Source::File(path) => std::fs::metadata(path)?.modified()?.into(),
+            Source::Bytes(_) => chrono::Local::now(),
+        };
+        // zip times are local time without a zone, as rekordbox writes them
+        let options = SimpleFileOptions::default()
+            .last_modified_time(zip::DateTime::try_from(modified.naive_local())?);
         zip.start_file(entry.name.as_str(), options)?;
         match &entry.source {
             Source::File(path) => zip.write_all(&std::fs::read(path)?)?,
