@@ -112,6 +112,23 @@ pub(crate) async fn handle_backup(
                     output::EXIT_CONFLICT,
                 );
             }
+            // master.db is in WAL mode. A closed rekordbox leaves an empty -wal;
+            // pages in it are changes that master.db alone does not have yet.
+            let wal = db_path.with_file_name("master.db-wal");
+            if std::fs::metadata(&wal).is_ok_and(|m| m.len() > 0) {
+                return (
+                    output::error(
+                        "conflict",
+                        output::EXIT_CONFLICT,
+                        &format!(
+                            "{} is not empty: rekordbox is open, or did not close cleanly",
+                            wal.display()
+                        ),
+                        Some("Close rekordbox (or open and close it once), then try again"),
+                    ),
+                    output::EXIT_CONFLICT,
+                );
+            }
             let plan = match plan(pool, db_path, &like, settings_dir).await {
                 Ok(plan) => plan,
                 Err(e) => return e,

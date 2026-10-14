@@ -432,10 +432,22 @@ mod create {
         assert_eq!(std::fs::read(&lib.out).unwrap(), b"an older backup");
     }
 
+    /// A non-empty master.db-wal holds changes that are not in master.db yet:
+    /// rekordbox is open, or did not close cleanly.
     #[tokio::test]
-    #[ignore = "todo"]
     async fn refuses_while_master_db_has_a_write_ahead_log() {
-        todo!()
+        let lib = library().await;
+        let wal = lib.db.with_file_name("master.db-wal");
+        std::fs::write(&wal, "pending pages").unwrap();
+
+        let assert = create(&lib).assert().code(5);
+
+        let json: serde_json::Value = serde_json::from_slice(&assert.get_output().stdout).unwrap();
+        assert_eq!(json["error"]["category"], "conflict");
+        assert!(!lib.out.exists());
+
+        std::fs::write(&wal, "").unwrap();
+        create(&lib).assert().code(0);
     }
 
     #[tokio::test]
