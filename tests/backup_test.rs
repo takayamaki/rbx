@@ -5,11 +5,128 @@
 
 mod common;
 
+mod fixture {
+    use std::io::{Read, Write};
+    use std::path::{Path, PathBuf};
+
+    use assert_cmd::Command;
+    use tempfile::TempDir;
+
+    /// The files rekordbox keeps next to master.db that go into the backup.
+    pub const LIBRARY_FILES: [&str; 5] = [
+        "smartlist.xml",
+        "masterPlaylists6.xml",
+        "automixPlaylist6.xml",
+        "networkAnalyze6.db",
+        "networkRecommend.db",
+    ];
+
+    /// A library laid out like a rekordbox install, all in one tempdir.
+    pub struct Library {
+        pub _dir: TempDir,
+        pub db: PathBuf,
+        pub like: PathBuf,
+        pub out: PathBuf,
+    }
+
+    pub const LIKE_CONTENTS_XML: &str = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\r\n\r\n\
+        <PROPERTIES>\r\n\
+        \x20 <VALUE name=\"DB_ID\" val=\"1\"/>\r\n\
+        \x20 <VALUE name=\"CONTENT_ID_MAX\" val=\"0\"/>\r\n\
+        \x20 <VALUE name=\"CONTENT_NUM\" val=\"0\"/>\r\n\
+        \x20 <VALUE name=\"BACKUP_RB_VER\" val=\"70218\"/>\r\n\
+        \x20 <VALUE name=\"BACKUP_FILE_VER\" val=\"4\"/>\r\n\
+        \x20 <VALUE name=\"DIRECTORY_ARRAY\" val=\"\"/>\r\n\
+        \x20 <VALUE name=\"userMusicDirectory\" val=\"C:/Music\"/>\r\n\
+        \x20 <VALUE name=\"userHomeDirectory\" val=\"C:/Users/dj\"/>\r\n\
+        </PROPERTIES>\r\n";
+
+    pub async fn library() -> Library {
+        let (db, dir) = crate::common::setup_db().await;
+        let db_dir = db.parent().unwrap();
+        for name in LIBRARY_FILES {
+            std::fs::write(db_dir.join(name), format!("{} body", name)).unwrap();
+        }
+        // rekordbox's own rolling copies; not part of a backup
+        std::fs::write(db_dir.join("master.backup.db"), "old").unwrap();
+
+        let like = dir.path().join("like.zip");
+        write_zip(&like, &[("contents.xml", LIKE_CONTENTS_XML.as_bytes())]);
+        let out = dir.path().join("out").join("rekordbox_bak.zip");
+        std::fs::create_dir_all(out.parent().unwrap()).unwrap();
+        Library {
+            _dir: dir,
+            db,
+            like,
+            out,
+        }
+    }
+
+    pub fn write_zip(path: &Path, entries: &[(&str, &[u8])]) {
+        let mut zip = zip::ZipWriter::new(std::fs::File::create(path).unwrap());
+        for (name, body) in entries {
+            zip.start_file(*name, zip::write::SimpleFileOptions::default())
+                .unwrap();
+            zip.write_all(body).unwrap();
+        }
+        zip.finish().unwrap();
+    }
+
+    pub fn rbx_cmd(db_path: &Path) -> Command {
+        let mut cmd = Command::cargo_bin("rbx").unwrap();
+        cmd.env_remove("RBX_DB_PATH");
+        cmd.arg("--db").arg(db_path);
+        cmd
+    }
+
+    /// `rbx backup create <out> --like <like> --execute`
+    pub fn create(lib: &Library) -> Command {
+        let mut cmd = rbx_cmd(&lib.db);
+        cmd.args(["backup", "create"])
+            .arg(&lib.out)
+            .arg("--like")
+            .arg(&lib.like)
+            .arg("--execute");
+        cmd
+    }
+
+    pub fn zip_names(path: &Path) -> Vec<String> {
+        let zip = zip::ZipArchive::new(std::fs::File::open(path).unwrap()).unwrap();
+        zip.file_names().map(|n| n.unwrap().to_string()).collect()
+    }
+
+    pub fn zip_read(path: &Path, name: &str) -> Vec<u8> {
+        let mut zip = zip::ZipArchive::new(std::fs::File::open(path).unwrap()).unwrap();
+        let mut body = Vec::new();
+        zip.by_name(name).unwrap().read_to_end(&mut body).unwrap();
+        body
+    }
+}
+
 mod create {
+    use crate::fixture::*;
+
     #[tokio::test]
-    #[ignore = "todo"]
     async fn zips_master_db_and_the_library_files_beside_it() {
-        todo!()
+        let lib = library().await;
+
+        create(&lib).assert().code(0);
+
+        let names = zip_names(&lib.out);
+        assert_eq!(names[0], "master.db");
+        assert_eq!(
+            zip_read(&lib.out, "master.db"),
+            std::fs::read(&lib.db).unwrap()
+        );
+        for name in LIBRARY_FILES {
+            assert_eq!(
+                zip_read(&lib.out, name),
+                format!("{} body", name).into_bytes(),
+                "{}",
+                name
+            );
+        }
+        assert!(!names.contains(&"master.backup.db".to_string()));
     }
 
     #[tokio::test]

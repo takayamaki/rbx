@@ -39,6 +39,11 @@ pub(crate) enum Commands {
         #[command(subcommand)]
         action: HistoryAction,
     },
+    /// Back up the library the way rekordbox does
+    Backup {
+        #[command(subcommand)]
+        action: BackupAction,
+    },
     /// Run raw SQL query (read-only by default)
     Query {
         /// SQL to execute
@@ -347,6 +352,21 @@ pub(crate) enum MytagsAction {
         /// My Tag ID
         id: String,
         /// Actually apply the change
+        #[arg(long)]
+        execute: bool,
+    },
+}
+
+#[derive(Subcommand)]
+pub(crate) enum BackupAction {
+    /// Write a library backup zip that rekordbox can restore (dry-run by default)
+    Create {
+        /// Zip file to write
+        out: PathBuf,
+        /// A backup made by rekordbox on this computer; its contents.xml is the template
+        #[arg(long)]
+        like: PathBuf,
+        /// Actually write the zip
         #[arg(long)]
         execute: bool,
     },
