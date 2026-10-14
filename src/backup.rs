@@ -8,7 +8,7 @@ pub fn directory_array<'a>(
     user_dirs: &[&str],
 ) -> Vec<String> {
     let mut roots: Vec<String> = Vec::new();
-    for path in paths {
+    for path in paths.into_iter().filter(|p| is_local_file(p)) {
         let root = user_dirs
             .iter()
             .filter(|d| {
@@ -25,4 +25,11 @@ pub fn directory_array<'a>(
         }
     }
     roots
+}
+
+/// A track path that is a file on a drive ("F:/DJ/01.m4a"),
+/// not a streaming track ("spotify:track:…").
+pub fn is_local_file(path: &str) -> bool {
+    let b = path.as_bytes();
+    b.len() > 3 && b[0].is_ascii_alphabetic() && b[1] == b':' && b[2] == b'/'
 }

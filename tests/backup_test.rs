@@ -364,9 +364,13 @@ mod directory_array {
     }
 
     #[test]
-    #[ignore = "todo"]
     fn streaming_tracks_are_not_files() {
-        todo!()
+        let paths = [
+            "spotify:track:09IStsImFySgyp0pIQdqAc",
+            "apple-music:tracks:1456063107",
+            "F:/DJ/01.m4a",
+        ];
+        assert_eq!(directory_array(paths, &USER_DIRS), ["F:"]);
     }
 }
 
