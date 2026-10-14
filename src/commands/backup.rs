@@ -171,7 +171,7 @@ async fn plan(
     }
     let settings_dir = match settings_dir {
         Some(dir) => dir,
-        None => registry_settings_dir(pool).await?,
+        None => registry_settings_dir(pool, db_dir).await?,
     };
     // rekordbox 6 and 7 still keep this one in the older Pioneer/rekordbox dir
     let older = settings_dir
@@ -312,26 +312,49 @@ async fn track_folders(
     Ok(())
 }
 
-/// rekordbox records its settings dir in agentRegistry.
-async fn registry_settings_dir(pool: &SqlitePool) -> Result<PathBuf, (serde_json::Value, i32)> {
-    let row = sqlx::query_as::<_, (Option<String>,)>(
-        "SELECT str_1 FROM agentRegistry WHERE registry_id = 'SyncSettingsRootPath'",
-    )
-    .fetch_optional(pool)
-    .await
-    .map_err(db_error)?;
-    match row.and_then(|(p,)| p).filter(|p| !p.is_empty()) {
-        Some(p) => Ok(PathBuf::from(p)),
-        None => Err((
+/// rekordbox records its settings dir in agentRegistry, as a path on its own computer.
+/// SyncAnalysisDataRootPath (<master.db dir>\share) tells how that maps to here.
+async fn registry_settings_dir(
+    pool: &SqlitePool,
+    db_dir: &Path,
+) -> Result<PathBuf, (serde_json::Value, i32)> {
+    let config_error = |message: &str| {
+        (
             output::error(
                 "config",
                 output::EXIT_CONFIG,
-                "agentRegistry has no SyncSettingsRootPath",
+                message,
                 Some("Pass the rekordbox settings dir with --settings-dir"),
             ),
             output::EXIT_CONFIG,
-        )),
-    }
+        )
+    };
+    let settings = registry_str(pool, "SyncSettingsRootPath")
+        .await?
+        .ok_or_else(|| config_error("agentRegistry has no SyncSettingsRootPath"))?;
+    let share = registry_str(pool, "SyncAnalysisDataRootPath")
+        .await?
+        .unwrap_or_default();
+    let db_windows_dir = share
+        .strip_suffix("\\share")
+        .or_else(|| share.strip_suffix("/share"))
+        .unwrap_or(&share);
+    backup::local_path(&settings, db_windows_dir, db_dir)
+        .map_err(|e| config_error(&format!("Cannot find the settings dir {}: {}", settings, e)))
+}
+
+async fn registry_str(
+    pool: &SqlitePool,
+    registry_id: &str,
+) -> Result<Option<String>, (serde_json::Value, i32)> {
+    let row = sqlx::query_as::<_, (Option<String>,)>(
+        "SELECT str_1 FROM agentRegistry WHERE registry_id = ?",
+    )
+    .bind(registry_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(db_error)?;
+    Ok(row.and_then(|(p,)| p).filter(|p| !p.is_empty()))
 }
 
 fn write_zip(out: &Path, entries: &[Entry]) -> Result<(), Box<dyn std::error::Error>> {

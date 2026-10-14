@@ -404,6 +404,38 @@ mod create {
         assert!(!zip_names(&lib.out).contains(&"DEVSETTING.DAT".to_string()));
     }
 
+    /// Under WSL: master.db is F:\PIONEER\Master to rekordbox and /mnt/f/PIONEER/Master to rbx.
+    #[tokio::test]
+    async fn finds_the_settings_dir_through_the_windows_drive_mounts() {
+        let lib = library().await;
+        let root = lib.db.parent().unwrap().join("mnt");
+        let db_dir = root.join("f").join("PIONEER").join("Master");
+        std::fs::create_dir_all(&db_dir).unwrap();
+        let db = db_dir.join("master.db");
+        std::fs::copy(&lib.db, &db).unwrap();
+        let settings = root.join("c/Users/dj/AppData/Roaming/Pioneer/rekordbox6");
+        std::fs::create_dir_all(&settings).unwrap();
+        std::fs::write(settings.join("rekordbox3.settings"), "on C").unwrap();
+        set_registry(
+            &db,
+            "SyncSettingsRootPath",
+            r"C:\Users\dj\AppData\Roaming\Pioneer\rekordbox6",
+        )
+        .await;
+        set_registry(&db, "SyncAnalysisDataRootPath", r"F:\PIONEER\Master\share").await;
+
+        rbx_cmd(&db)
+            .args(["backup", "create"])
+            .arg(&lib.out)
+            .arg("--like")
+            .arg(&lib.like)
+            .arg("--execute")
+            .assert()
+            .code(0);
+
+        assert_eq!(zip_read(&lib.out, "rekordbox3.settings"), b"on C");
+    }
+
     #[tokio::test]
     async fn settings_dir_flag_overrides_agent_registry() {
         let lib = library().await;
