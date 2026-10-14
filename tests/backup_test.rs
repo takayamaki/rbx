@@ -42,6 +42,7 @@ mod fixture {
     pub struct Library {
         pub _dir: TempDir,
         pub db: PathBuf,
+        pub settings: PathBuf,
         pub like: PathBuf,
         pub out: PathBuf,
     }
@@ -86,6 +87,7 @@ mod fixture {
         Library {
             _dir: dir,
             db,
+            settings,
             like,
             out,
         }
@@ -345,10 +347,33 @@ mod create {
         assert_eq!(zip_read(&lib.out, "playlists3.sync"), b"sync body");
     }
 
+    /// rekordbox puts them after the share/ folders, just before contents.xml.
     #[tokio::test]
-    #[ignore = "todo"]
     async fn zips_only_the_rekordbox_key_mappings() {
-        todo!()
+        let lib = library().await;
+        add_track_files(&lib.db, "101", "e01/39bfa-1560").await;
+        let mappings = lib.settings.join("KeyMappings");
+        std::fs::create_dir_all(&mappings).unwrap();
+        for name in [
+            "rekordbox_9999999999999.mappings",
+            "rekordbox_0000000000000.mappings",
+            "rekordboxedit_0000000000000.mappings",
+        ] {
+            std::fs::write(mappings.join(name), name).unwrap();
+        }
+
+        create(&lib).assert().code(0);
+
+        let names = zip_names(&lib.out);
+        let n = names.len();
+        assert_eq!(
+            names[n - 3..n - 1],
+            [
+                "KeyMappings/rekordbox_0000000000000.mappings",
+                "KeyMappings/rekordbox_9999999999999.mappings",
+            ]
+        );
+        assert!(names[n - 4].starts_with("share/"));
     }
 
     #[tokio::test]

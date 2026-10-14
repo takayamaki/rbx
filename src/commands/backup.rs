@@ -134,11 +134,34 @@ async fn plan(
         });
     }
     entries.extend(track_folders(pool, db_dir).await?);
+    entries.extend(key_mappings(&settings_dir));
     entries.push(Entry {
         name: "contents.xml".to_string(),
         source: Source::Bytes(contents_xml(pool, like).await?.into_bytes()),
     });
     Ok(entries)
+}
+
+/// rekordbox's keyboard mappings (rekordbox_*.mappings), by name.
+/// The edit-mode ones (rekordboxedit_*) are not in rekordbox's backup.
+fn key_mappings(settings_dir: &Path) -> Vec<Entry> {
+    let dir = settings_dir.join("KeyMappings");
+    let Ok(files) = std::fs::read_dir(&dir) else {
+        return Vec::new();
+    };
+    let mut names: Vec<String> = files
+        .flatten()
+        .map(|f| f.file_name().to_string_lossy().into_owned())
+        .filter(|n| n.starts_with("rekordbox_") && n.ends_with(".mappings"))
+        .collect();
+    names.sort();
+    names
+        .into_iter()
+        .map(|n| Entry {
+            name: format!("KeyMappings/{}", n),
+            source: Source::File(dir.join(&n)),
+        })
+        .collect()
 }
 
 /// contents.xml: the one in the --like backup, with the library values recomputed.
