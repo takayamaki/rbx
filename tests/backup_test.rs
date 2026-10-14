@@ -319,10 +319,14 @@ mod create {
 }
 
 mod directory_array {
+    use rbx::backup::directory_array;
+
+    const USER_DIRS: [&str; 2] = ["D:/My Music", "C:/Users/dj"];
+
     #[test]
-    #[ignore = "todo"]
     fn files_under_a_user_directory_are_grouped_by_that_directory() {
-        todo!()
+        let paths = ["D:/My Music/album/01.m4a", "D:/My Music/02.mp3"];
+        assert_eq!(directory_array(paths, &USER_DIRS), ["D:/My Music"]);
     }
 
     #[test]
