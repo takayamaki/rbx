@@ -105,8 +105,14 @@ pub fn local_path(
     db_windows_dir: &str,
     db_local_dir: &Path,
 ) -> Result<PathBuf, String> {
-    let (Some(drive), Some(db_drive)) = (windows_drive(path), windows_drive(db_windows_dir)) else {
+    let Some(drive) = windows_drive(path) else {
         return Ok(PathBuf::from(path));
+    };
+    let Some(db_drive) = windows_drive(db_windows_dir) else {
+        return Err(format!(
+            "master.db's dir on Windows is unknown, so {} cannot be found",
+            path
+        ));
     };
     let unmatched = || {
         format!(

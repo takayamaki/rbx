@@ -607,6 +607,13 @@ mod local_path {
         assert_eq!(path, Ok(PathBuf::from("/mnt/C/Users/dj")));
     }
 
+    /// Without SyncAnalysisDataRootPath there is nothing to line the mounts up with.
+    #[test]
+    fn fails_for_a_windows_path_when_the_db_dir_is_not_a_windows_path() {
+        let path = local_path(r"C:\Users\dj", "", Path::new("/mnt/f/PIONEER/Master"));
+        assert!(path.is_err());
+    }
+
     #[test]
     fn fails_when_the_db_path_does_not_end_with_the_windows_db_dir() {
         for local in ["/data/rekordbox", "/mnt/d/PIONEER/Master"] {
