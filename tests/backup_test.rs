@@ -330,9 +330,9 @@ mod directory_array {
     }
 
     #[test]
-    #[ignore = "todo"]
     fn files_outside_user_directories_are_grouped_by_drive() {
-        todo!()
+        let paths = ["F:/DJ/01.m4a", "D:/DJ/02.m4a", "F:/DJ/03.m4a"];
+        assert_eq!(directory_array(paths, &USER_DIRS), ["F:", "D:"]);
     }
 
     #[test]
