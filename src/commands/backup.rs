@@ -116,6 +116,17 @@ async fn plan(
         });
     }
     let settings_dir = settings_dir(pool).await?;
+    // rekordbox 6 and 7 still keep this one in the older Pioneer/rekordbox dir
+    entries.push(Entry {
+        name: "playlists3.sync".to_string(),
+        source: Source::File(
+            settings_dir
+                .parent()
+                .unwrap_or(Path::new("."))
+                .join("rekordbox")
+                .join("playlists3.sync"),
+        ),
+    });
     for name in SETTINGS_FILES {
         entries.push(Entry {
             name: name.to_string(),

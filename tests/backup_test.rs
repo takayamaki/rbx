@@ -75,6 +75,9 @@ mod fixture {
         // a settings file rekordbox does not back up
         std::fs::write(settings.join("EditSettings.xml"), "edit").unwrap();
         set_registry(&db, "SyncSettingsRootPath", settings.to_str().unwrap()).await;
+        let older = dir.path().join("Pioneer").join("rekordbox");
+        std::fs::create_dir_all(&older).unwrap();
+        std::fs::write(older.join("playlists3.sync"), "sync body").unwrap();
 
         let like = dir.path().join("like.zip");
         write_zip(&like, &[("contents.xml", LIKE_CONTENTS_XML.as_bytes())]);
@@ -229,7 +232,7 @@ mod create {
         create(&lib).assert().code(0);
 
         let names = zip_names(&lib.out);
-        let start = 1 + LIBRARY_FILES.len();
+        let start = 1 + LIBRARY_FILES.len() + 1; // after playlists3.sync
         assert_eq!(names[start..start + SETTINGS_FILES.len()], SETTINGS_FILES);
         for name in SETTINGS_FILES {
             assert_eq!(
@@ -330,10 +333,16 @@ mod create {
         assert_eq!(zipped, mtime);
     }
 
+    /// rekordbox 6 and 7 keep it in Pioneer/rekordbox, next to the rekordbox6 settings dir.
     #[tokio::test]
-    #[ignore = "todo"]
     async fn zips_playlists3_sync_from_the_older_rekordbox_settings_dir() {
-        todo!()
+        let lib = library().await;
+
+        create(&lib).assert().code(0);
+
+        let names = zip_names(&lib.out);
+        assert_eq!(names[1 + LIBRARY_FILES.len()], "playlists3.sync");
+        assert_eq!(zip_read(&lib.out, "playlists3.sync"), b"sync body");
     }
 
     #[tokio::test]
