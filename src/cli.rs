@@ -366,6 +366,9 @@ pub(crate) enum BackupAction {
         /// A backup made by rekordbox on this computer; its contents.xml is the template
         #[arg(long)]
         like: PathBuf,
+        /// rekordbox's settings dir (default: agentRegistry SyncSettingsRootPath)
+        #[arg(long)]
+        settings_dir: Option<PathBuf>,
         /// Actually write the zip
         #[arg(long)]
         execute: bool,

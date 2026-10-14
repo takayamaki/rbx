@@ -405,9 +405,19 @@ mod create {
     }
 
     #[tokio::test]
-    #[ignore = "todo"]
     async fn settings_dir_flag_overrides_agent_registry() {
-        todo!()
+        let lib = library().await;
+        set_registry(&lib.db, "SyncSettingsRootPath", "/nowhere/rekordbox6").await;
+
+        let assert = create(&lib)
+            .arg("--settings-dir")
+            .arg(&lib.settings)
+            .assert()
+            .code(0);
+
+        let json: serde_json::Value = serde_json::from_slice(&assert.get_output().stdout).unwrap();
+        assert_eq!(json["result"]["missing"], serde_json::json!([]));
+        assert!(zip_names(&lib.out).contains(&"rekordbox3.settings".to_string()));
     }
 
     #[tokio::test]

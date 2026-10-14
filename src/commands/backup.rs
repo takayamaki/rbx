@@ -95,8 +95,13 @@ pub(crate) async fn handle_backup(
     action: BackupAction,
 ) -> (serde_json::Value, i32) {
     match action {
-        BackupAction::Create { out, like, execute } => {
-            let plan = match plan(pool, db_path, &like).await {
+        BackupAction::Create {
+            out,
+            like,
+            settings_dir,
+            execute,
+        } => {
+            let plan = match plan(pool, db_path, &like, settings_dir).await {
                 Ok(plan) => plan,
                 Err(e) => return e,
             };
@@ -128,6 +133,7 @@ async fn plan(
     pool: &SqlitePool,
     db_path: &Path,
     like: &Path,
+    settings_dir: Option<PathBuf>,
 ) -> Result<Plan, (serde_json::Value, i32)> {
     let db_dir = db_path.parent().unwrap_or(Path::new("."));
     let mut plan = Plan::default();
@@ -135,7 +141,10 @@ async fn plan(
     for name in LIBRARY_FILES {
         plan.file(name, db_dir.join(name));
     }
-    let settings_dir = settings_dir(pool).await?;
+    let settings_dir = match settings_dir {
+        Some(dir) => dir,
+        None => registry_settings_dir(pool).await?,
+    };
     // rekordbox 6 and 7 still keep this one in the older Pioneer/rekordbox dir
     let older = settings_dir
         .parent()
@@ -276,7 +285,7 @@ async fn track_folders(
 }
 
 /// rekordbox records its settings dir in agentRegistry.
-async fn settings_dir(pool: &SqlitePool) -> Result<PathBuf, (serde_json::Value, i32)> {
+async fn registry_settings_dir(pool: &SqlitePool) -> Result<PathBuf, (serde_json::Value, i32)> {
     let row = sqlx::query_as::<_, (Option<String>,)>(
         "SELECT str_1 FROM agentRegistry WHERE registry_id = 'SyncSettingsRootPath'",
     )
