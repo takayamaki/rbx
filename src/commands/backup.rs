@@ -101,33 +101,8 @@ pub(crate) async fn handle_backup(
             settings_dir,
             execute,
         } => {
-            if out.exists() {
-                return (
-                    output::error(
-                        "conflict",
-                        output::EXIT_CONFLICT,
-                        &format!("{} already exists", out.display()),
-                        Some("Choose another file name, or move the old backup away"),
-                    ),
-                    output::EXIT_CONFLICT,
-                );
-            }
-            // master.db is in WAL mode. A closed rekordbox leaves an empty -wal;
-            // pages in it are changes that master.db alone does not have yet.
-            let wal = db_path.with_file_name("master.db-wal");
-            if std::fs::metadata(&wal).is_ok_and(|m| m.len() > 0) {
-                return (
-                    output::error(
-                        "conflict",
-                        output::EXIT_CONFLICT,
-                        &format!(
-                            "{} is not empty: rekordbox is open, or did not close cleanly",
-                            wal.display()
-                        ),
-                        Some("Close rekordbox (or open and close it once), then try again"),
-                    ),
-                    output::EXIT_CONFLICT,
-                );
+            if let Err(e) = preflight(&out, db_path) {
+                return e;
             }
             let plan = match plan(pool, db_path, &like, settings_dir).await {
                 Ok(plan) => plan,
@@ -155,6 +130,35 @@ pub(crate) async fn handle_backup(
             }
         }
     }
+}
+
+/// Stops before reading anything when the backup cannot be made safely.
+fn preflight(out: &Path, db_path: &Path) -> Result<(), (serde_json::Value, i32)> {
+    let conflict = |message: &str, next_step: &str| {
+        Err((
+            output::error("conflict", output::EXIT_CONFLICT, message, Some(next_step)),
+            output::EXIT_CONFLICT,
+        ))
+    };
+    if out.exists() {
+        return conflict(
+            &format!("{} already exists", out.display()),
+            "Choose another file name, or move the old backup away",
+        );
+    }
+    // master.db is in WAL mode. A closed rekordbox leaves an empty -wal;
+    // pages in it are changes that master.db alone does not have yet.
+    let wal = db_path.with_file_name("master.db-wal");
+    if std::fs::metadata(&wal).is_ok_and(|m| m.len() > 0) {
+        return conflict(
+            &format!(
+                "{} is not empty: rekordbox is open, or did not close cleanly",
+                wal.display()
+            ),
+            "Close rekordbox (or open and close it once), then try again",
+        );
+    }
+    Ok(())
 }
 
 async fn plan(
@@ -367,7 +371,9 @@ fn write_zip(out: &Path, entries: &[Entry]) -> Result<(), Box<dyn std::error::Er
             .last_modified_time(zip::DateTime::try_from(modified.naive_local())?);
         zip.start_file(entry.name.as_str(), options)?;
         match &entry.source {
-            Source::File(path) => zip.write_all(&std::fs::read(path)?)?,
+            Source::File(path) => {
+                std::io::copy(&mut File::open(path)?, &mut zip)?;
+            }
             Source::Bytes(bytes) => zip.write_all(bytes)?,
         }
     }

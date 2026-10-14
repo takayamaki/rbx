@@ -1,6 +1,9 @@
 //! Library backup in the same shape as rekordbox's own
 //! (Preferences → Advanced → Database → Library backup).
 
+use std::ops::Range;
+use std::path::{Path, PathBuf};
+
 /// DIRECTORY_ARRAY in contents.xml: the roots of the tracks' file paths.
 /// A root is the user folder the file is in, or else its drive ("F:").
 pub fn directory_array<'a>(
@@ -39,14 +42,9 @@ pub fn is_local_file(path: &str) -> bool {
 pub fn manifest(template: &str, values: &[(&str, String)]) -> String {
     let mut out = template.to_string();
     for (name, value) in values {
-        let head = format!("<VALUE name=\"{}\" val=\"", name);
-        let Some(start) = out.find(&head).map(|i| i + head.len()) else {
-            continue;
-        };
-        let Some(len) = out[start..].find('"') else {
-            continue;
-        };
-        out.replace_range(start..start + len, &escape(value));
+        if let Some(range) = value_range(&out, name) {
+            out.replace_range(range, &escape(value));
+        }
     }
     out
 }
@@ -58,10 +56,15 @@ pub fn db_id(dbid: &str) -> Option<i32> {
 
 /// A VALUE in contents.xml.
 pub fn manifest_value(manifest: &str, name: &str) -> Option<String> {
+    value_range(manifest, name).map(|range| unescape(&manifest[range]))
+}
+
+/// Where the val="…" text of a VALUE is.
+fn value_range(manifest: &str, name: &str) -> Option<Range<usize>> {
     let head = format!("<VALUE name=\"{}\" val=\"", name);
     let start = manifest.find(&head)? + head.len();
     let len = manifest[start..].find('"')?;
-    Some(unescape(&manifest[start..start + len]))
+    Some(start..start + len)
 }
 
 /// The user folders (userMusicDirectory and so on) in contents.xml, for directory_array.
@@ -100,10 +103,10 @@ fn escape(value: &str) -> String {
 pub fn local_path(
     path: &str,
     db_windows_dir: &str,
-    db_local_dir: &std::path::Path,
-) -> Result<std::path::PathBuf, String> {
+    db_local_dir: &Path,
+) -> Result<PathBuf, String> {
     let (Some(drive), Some(db_drive)) = (windows_drive(path), windows_drive(db_windows_dir)) else {
-        return Ok(std::path::PathBuf::from(path));
+        return Ok(PathBuf::from(path));
     };
     let unmatched = || {
         format!(
@@ -130,7 +133,7 @@ pub fn local_path(
     } else {
         drive.to_ascii_uppercase()
     };
-    Ok(std::path::PathBuf::from(format!(
+    Ok(PathBuf::from(format!(
         "{}/{}{}",
         root,
         drive_dir,
