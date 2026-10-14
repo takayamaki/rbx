@@ -545,22 +545,36 @@ mod local_path {
         );
     }
 
+    /// rekordbox on macOS stores POSIX paths.
     #[test]
-    #[ignore = "todo"]
     fn keeps_a_posix_path_as_it_is() {
-        todo!()
+        let path = local_path(
+            "/Users/dj/Library/Pioneer/rekordbox6",
+            "/Users/dj/Library/Pioneer/rekordbox",
+            Path::new("/Users/dj/Library/Pioneer/rekordbox"),
+        );
+        assert_eq!(
+            path,
+            Ok(PathBuf::from("/Users/dj/Library/Pioneer/rekordbox6"))
+        );
     }
 
     #[test]
-    #[ignore = "todo"]
     fn drive_letters_match_in_either_case() {
-        todo!()
+        let path = local_path(
+            r"c:\Users\dj",
+            r"f:\PIONEER\Master",
+            Path::new("/mnt/F/PIONEER/Master"),
+        );
+        assert_eq!(path, Ok(PathBuf::from("/mnt/C/Users/dj")));
     }
 
     #[test]
-    #[ignore = "todo"]
     fn fails_when_the_db_path_does_not_end_with_the_windows_db_dir() {
-        todo!()
+        for local in ["/data/rekordbox", "/mnt/d/PIONEER/Master"] {
+            let path = local_path(r"C:\Users\dj", r"F:\PIONEER\Master", Path::new(local));
+            assert!(path.is_err(), "{}", local);
+        }
     }
 }
 
