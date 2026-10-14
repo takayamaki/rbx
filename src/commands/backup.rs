@@ -380,3 +380,52 @@ fn write_zip(out: &Path, entries: &[Entry]) -> Result<(), Box<dyn std::error::Er
     zip.finish()?;
     Ok(())
 }
+
+// --- describe ---
+
+use crate::describe::{describe_command, describe_resource, flag, mutation_result_schema};
+
+/// `rbx describe backup [action]`.
+pub(crate) fn describe(action: Option<&str>) -> Option<serde_json::Value> {
+    Some(match action {
+        None => describe_resource(
+            "backup",
+            &[(
+                "create",
+                "Write a library backup zip in rekordbox's own format (dry-run by default)",
+            )],
+        ),
+        Some("create") => describe_command(
+            "backup create",
+            &[
+                flag("out", "string", true, "Zip file to write. Must not exist yet"),
+                flag(
+                    "--like",
+                    "string",
+                    true,
+                    "A backup zip made by rekordbox on this computer. Its contents.xml is the template: \
+                     the computer's values are kept, DB_ID / CONTENT_NUM / DIRECTORY_ARRAY are recomputed",
+                ),
+                flag(
+                    "--settings-dir",
+                    "string",
+                    false,
+                    "rekordbox's settings dir. Default: agentRegistry SyncSettingsRootPath, \
+                     found through the drive mounts under WSL",
+                ),
+                flag(
+                    "--execute",
+                    "bool",
+                    false,
+                    "Actually write the zip (default: dry-run)",
+                ),
+            ],
+            &mutation_result_schema("backup.create"),
+            &[
+                "rbx backup create rekordbox_bak_20261015.zip --like rekordbox_bak_20261014.zip",
+                "rbx backup create rekordbox_bak_20261015.zip --like rekordbox_bak_20261014.zip --execute",
+            ],
+        ),
+        _ => return None,
+    })
+}
