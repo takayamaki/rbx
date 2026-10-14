@@ -451,9 +451,19 @@ mod create {
     }
 
     #[tokio::test]
-    #[ignore = "todo"]
     async fn fails_when_the_like_backup_has_no_contents_xml() {
-        todo!()
+        let lib = library().await;
+        std::fs::remove_file(&lib.like).unwrap();
+        write_zip(&lib.like, &[("master.db", b"not a backup")]);
+
+        let assert = create(&lib).assert().code(4);
+
+        let json: serde_json::Value = serde_json::from_slice(&assert.get_output().stdout).unwrap();
+        assert!(json["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("contents.xml"));
+        assert!(!lib.out.exists());
     }
 }
 
