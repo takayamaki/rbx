@@ -358,9 +358,9 @@ mod directory_array {
     }
 
     #[test]
-    #[ignore = "todo"]
     fn a_directory_does_not_match_a_longer_name_that_starts_with_it() {
-        todo!()
+        let paths = ["D:/My Music2/01.mp3"];
+        assert_eq!(directory_array(paths, &USER_DIRS), ["D:"]);
     }
 
     #[test]

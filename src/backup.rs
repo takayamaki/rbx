@@ -11,7 +11,10 @@ pub fn directory_array<'a>(
     for path in paths {
         let root = user_dirs
             .iter()
-            .filter(|d| path.starts_with(*d))
+            .filter(|d| {
+                path.strip_prefix(*d)
+                    .is_some_and(|rest| rest.starts_with('/'))
+            })
             .max_by_key(|d| d.len());
         let root = match root {
             Some(dir) => dir.to_string(),
