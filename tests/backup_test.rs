@@ -130,9 +130,22 @@ mod create {
     }
 
     #[tokio::test]
-    #[ignore = "todo"]
     async fn dry_run_lists_what_would_be_zipped_and_writes_nothing() {
-        todo!()
+        let lib = library().await;
+
+        let assert = rbx_cmd(&lib.db)
+            .args(["backup", "create"])
+            .arg(&lib.out)
+            .arg("--like")
+            .arg(&lib.like)
+            .assert()
+            .code(0);
+
+        let json: serde_json::Value = serde_json::from_slice(&assert.get_output().stdout).unwrap();
+        assert_eq!(json["dry_run"], true);
+        assert_eq!(json["plan"]["entries"], 1 + LIBRARY_FILES.len());
+        assert!(json["next_step"].as_str().unwrap().contains("--execute"));
+        assert!(!lib.out.exists());
     }
 
     #[tokio::test]
