@@ -401,10 +401,31 @@ mod local_path {
 }
 
 mod manifest {
+    use rbx::backup::manifest;
+
+    const TEMPLATE: &str = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\r\n\r\n\
+        <PROPERTIES>\r\n\
+        \x20 <VALUE name=\"DB_ID\" val=\"-1095663931\"/>\r\n\
+        \x20 <VALUE name=\"CONTENT_NUM\" val=\"10668\"/>\r\n\
+        \x20 <VALUE name=\"BACKUP_RB_VER\" val=\"70218\"/>\r\n\
+        \x20 <VALUE name=\"DIRECTORY_ARRAY\" val=\"F:,D:\"/>\r\n\
+        </PROPERTIES>\r\n";
+
     #[test]
-    #[ignore = "todo"]
     fn replaces_the_library_values_and_keeps_every_other_byte() {
-        todo!()
+        let out = manifest(
+            TEMPLATE,
+            &[
+                ("DB_ID", "7".to_string()),
+                ("CONTENT_NUM", "2".to_string()),
+                ("DIRECTORY_ARRAY", "D:/My Music".to_string()),
+            ],
+        );
+        let expected = TEMPLATE
+            .replace("\"-1095663931\"", "\"7\"")
+            .replace("\"10668\"", "\"2\"")
+            .replace("\"F:,D:\"", "\"D:/My Music\"");
+        assert_eq!(out, expected);
     }
 
     #[test]

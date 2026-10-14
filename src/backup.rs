@@ -33,3 +33,20 @@ pub fn is_local_file(path: &str) -> bool {
     let b = path.as_bytes();
     b.len() > 3 && b[0].is_ascii_alphabetic() && b[1] == b':' && b[2] == b'/'
 }
+
+/// contents.xml from a template (the one in an earlier rekordbox backup),
+/// with the given VALUEs replaced.
+pub fn manifest(template: &str, values: &[(&str, String)]) -> String {
+    let mut out = template.to_string();
+    for (name, value) in values {
+        let head = format!("<VALUE name=\"{}\" val=\"", name);
+        let Some(start) = out.find(&head).map(|i| i + head.len()) else {
+            continue;
+        };
+        let Some(len) = out[start..].find('"') else {
+            continue;
+        };
+        out.replace_range(start..start + len, value);
+    }
+    out
+}
