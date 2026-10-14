@@ -428,10 +428,12 @@ mod manifest {
         assert_eq!(out, expected);
     }
 
+    /// djmdProperty.DBID 3199303365 was DB_ID -1095663931 in rekordbox's backup.
     #[test]
-    #[ignore = "todo"]
     fn db_id_is_the_dbid_as_a_signed_32_bit_number() {
-        todo!()
+        assert_eq!(rbx::backup::db_id("3199303365"), Some(-1095663931));
+        assert_eq!(rbx::backup::db_id("12345"), Some(12345));
+        assert_eq!(rbx::backup::db_id("x"), None);
     }
 
     #[test]

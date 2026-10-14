@@ -50,3 +50,8 @@ pub fn manifest(template: &str, values: &[(&str, String)]) -> String {
     }
     out
 }
+
+/// DB_ID in contents.xml: djmdProperty.DBID (an unsigned 32-bit number) read as signed.
+pub fn db_id(dbid: &str) -> Option<i32> {
+    dbid.parse::<u32>().ok().map(|n| n as i32)
+}
