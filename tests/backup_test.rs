@@ -288,10 +288,20 @@ mod create {
         );
     }
 
+    /// rekordbox's backup left out 14 analysis folders that no track named.
     #[tokio::test]
-    #[ignore = "todo"]
     async fn leaves_out_analysis_folders_no_track_refers_to() {
-        todo!()
+        let lib = library().await;
+        add_track_files(&lib.db, "101", "e01/39bfa-1560").await;
+        let orphan = add_track_files(&lib.db, "102", "c42/25e98-e4d3").await;
+        add_track_files(&lib.db, "102", "5f7/75f48-01aa").await;
+
+        create(&lib).assert().code(0);
+
+        let names = zip_names(&lib.out);
+        for name in orphan {
+            assert!(!names.contains(&name), "{}", name);
+        }
     }
 
     #[tokio::test]
