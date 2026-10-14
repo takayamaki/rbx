@@ -21,6 +21,23 @@ mod fixture {
         "networkRecommend.db",
     ];
 
+    /// The files rekordbox copies from its settings dir, in its order.
+    pub const SETTINGS_FILES: [&str; 13] = [
+        "rekordbox3.settings",
+        "browseSetting.xml",
+        "PlaySettings.xml",
+        "activations.xml",
+        "SamplerSettings1.xml",
+        "LightingDB/macro.db3",
+        "LightingDB/user.db3",
+        "MYSETTING.DAT",
+        "MYSETTING2.DAT",
+        "DEVSETTING.DAT",
+        "DJMMYSETTING.DAT",
+        "rekordbox_export_settings.json",
+        "cue_personal_trend.json",
+    ];
+
     /// A library laid out like a rekordbox install, all in one tempdir.
     pub struct Library {
         pub _dir: TempDir,
@@ -50,6 +67,15 @@ mod fixture {
         // rekordbox's own rolling copies; not part of a backup
         std::fs::write(db_dir.join("master.backup.db"), "old").unwrap();
 
+        let settings = dir.path().join("Pioneer").join("rekordbox6");
+        std::fs::create_dir_all(settings.join("LightingDB")).unwrap();
+        for name in SETTINGS_FILES {
+            std::fs::write(settings.join(name), format!("{} body", name)).unwrap();
+        }
+        // a settings file rekordbox does not back up
+        std::fs::write(settings.join("EditSettings.xml"), "edit").unwrap();
+        set_registry(&db, "SyncSettingsRootPath", settings.to_str().unwrap()).await;
+
         let like = dir.path().join("like.zip");
         write_zip(&like, &[("contents.xml", LIKE_CONTENTS_XML.as_bytes())]);
         let out = dir.path().join("out").join("rekordbox_bak.zip");
@@ -60,6 +86,22 @@ mod fixture {
             like,
             out,
         }
+    }
+
+    pub async fn set_registry(db: &Path, registry_id: &str, value: &str) {
+        let pool = crate::common::open_pool(db).await;
+        sqlx::query(
+            "INSERT OR REPLACE INTO agentRegistry (registry_id, str_1, created_at, updated_at) \
+             VALUES (?, ?, ?, ?)",
+        )
+        .bind(registry_id)
+        .bind(value)
+        .bind(crate::common::SEED_TS)
+        .bind(crate::common::SEED_TS)
+        .execute(&pool)
+        .await
+        .unwrap();
+        pool.close().await;
     }
 
     pub fn write_zip(path: &Path, entries: &[(&str, &[u8])]) {
@@ -143,15 +185,29 @@ mod create {
 
         let json: serde_json::Value = serde_json::from_slice(&assert.get_output().stdout).unwrap();
         assert_eq!(json["dry_run"], true);
-        assert_eq!(json["plan"]["entries"], 1 + LIBRARY_FILES.len());
         assert!(json["next_step"].as_str().unwrap().contains("--execute"));
         assert!(!lib.out.exists());
+
+        create(&lib).assert().code(0);
+        assert_eq!(json["plan"]["entries"], zip_names(&lib.out).len());
     }
 
     #[tokio::test]
-    #[ignore = "todo"]
     async fn zips_the_settings_files_from_the_settings_dir_in_agent_registry() {
-        todo!()
+        let lib = library().await;
+
+        create(&lib).assert().code(0);
+
+        let names = zip_names(&lib.out);
+        let start = 1 + LIBRARY_FILES.len();
+        assert_eq!(names[start..start + SETTINGS_FILES.len()], SETTINGS_FILES);
+        for name in SETTINGS_FILES {
+            assert_eq!(
+                zip_read(&lib.out, name),
+                format!("{} body", name).into_bytes()
+            );
+        }
+        assert!(!names.contains(&"EditSettings.xml".to_string()));
     }
 
     #[tokio::test]

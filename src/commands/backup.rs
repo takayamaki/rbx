@@ -10,6 +10,7 @@ use sqlx::sqlite::SqlitePool;
 use zip::write::SimpleFileOptions;
 
 use crate::cli::BackupAction;
+use crate::commands::db_error;
 
 /// Files next to master.db that rekordbox puts at the top of the zip, after master.db.
 const LIBRARY_FILES: [&str; 5] = [
@@ -20,6 +21,23 @@ const LIBRARY_FILES: [&str; 5] = [
     "networkRecommend.db",
 ];
 
+/// Files from rekordbox's settings dir (agentRegistry SyncSettingsRootPath), in its order.
+const SETTINGS_FILES: [&str; 13] = [
+    "rekordbox3.settings",
+    "browseSetting.xml",
+    "PlaySettings.xml",
+    "activations.xml",
+    "SamplerSettings1.xml",
+    "LightingDB/macro.db3",
+    "LightingDB/user.db3",
+    "MYSETTING.DAT",
+    "MYSETTING2.DAT",
+    "DEVSETTING.DAT",
+    "DJMMYSETTING.DAT",
+    "rekordbox_export_settings.json",
+    "cue_personal_trend.json",
+];
+
 /// One file in the zip: its name there and where it is read from.
 struct Entry {
     name: String,
@@ -27,13 +45,16 @@ struct Entry {
 }
 
 pub(crate) async fn handle_backup(
-    _pool: &SqlitePool,
+    pool: &SqlitePool,
     db_path: &Path,
     action: BackupAction,
 ) -> (serde_json::Value, i32) {
     match action {
         BackupAction::Create { out, execute, .. } => {
-            let entries = plan(db_path);
+            let entries = match plan(pool, db_path).await {
+                Ok(entries) => entries,
+                Err(e) => return e,
+            };
             if !execute {
                 return (
                     output::mutation_dry_run(
@@ -62,7 +83,7 @@ pub(crate) async fn handle_backup(
 }
 
 /// The zip's entries in rekordbox's order.
-fn plan(db_path: &Path) -> Vec<Entry> {
+async fn plan(pool: &SqlitePool, db_path: &Path) -> Result<Vec<Entry>, (serde_json::Value, i32)> {
     let db_dir = db_path.parent().unwrap_or(Path::new("."));
     let mut entries = vec![Entry {
         name: "master.db".to_string(),
@@ -74,7 +95,36 @@ fn plan(db_path: &Path) -> Vec<Entry> {
             source: db_dir.join(name),
         });
     }
-    entries
+    let settings_dir = settings_dir(pool).await?;
+    for name in SETTINGS_FILES {
+        entries.push(Entry {
+            name: name.to_string(),
+            source: settings_dir.join(name),
+        });
+    }
+    Ok(entries)
+}
+
+/// rekordbox records its settings dir in agentRegistry.
+async fn settings_dir(pool: &SqlitePool) -> Result<PathBuf, (serde_json::Value, i32)> {
+    let row = sqlx::query_as::<_, (Option<String>,)>(
+        "SELECT str_1 FROM agentRegistry WHERE registry_id = 'SyncSettingsRootPath'",
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(db_error)?;
+    match row.and_then(|(p,)| p).filter(|p| !p.is_empty()) {
+        Some(p) => Ok(PathBuf::from(p)),
+        None => Err((
+            output::error(
+                "config",
+                output::EXIT_CONFIG,
+                "agentRegistry has no SyncSettingsRootPath",
+                Some("Pass the rekordbox settings dir with --settings-dir"),
+            ),
+            output::EXIT_CONFIG,
+        )),
+    }
 }
 
 fn write_zip(out: &Path, entries: &[Entry]) -> Result<(), Box<dyn std::error::Error>> {
