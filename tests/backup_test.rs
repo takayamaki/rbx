@@ -437,8 +437,11 @@ mod manifest {
     }
 
     #[test]
-    #[ignore = "todo"]
     fn escapes_xml_special_characters_in_values() {
-        todo!()
+        let out = manifest(
+            TEMPLATE,
+            &[("DIRECTORY_ARRAY", "D:/R&B <\"x\">".to_string())],
+        );
+        assert!(out.contains("val=\"D:/R&amp;B &lt;&quot;x&quot;&gt;\""));
     }
 }

@@ -46,7 +46,7 @@ pub fn manifest(template: &str, values: &[(&str, String)]) -> String {
         let Some(len) = out[start..].find('"') else {
             continue;
         };
-        out.replace_range(start..start + len, value);
+        out.replace_range(start..start + len, &escape(value));
     }
     out
 }
@@ -54,4 +54,12 @@ pub fn manifest(template: &str, values: &[(&str, String)]) -> String {
 /// DB_ID in contents.xml: djmdProperty.DBID (an unsigned 32-bit number) read as signed.
 pub fn db_id(dbid: &str) -> Option<i32> {
     dbid.parse::<u32>().ok().map(|n| n as i32)
+}
+
+fn escape(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
 }
