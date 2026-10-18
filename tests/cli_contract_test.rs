@@ -2887,7 +2887,105 @@ async fn tracks_mytags_list_reports_duplicate_rows() {
 /// `mytags dedupe --execute` keeps the oldest row of each pair and soft-deletes the others
 /// with new USNs, in one transaction.
 #[tokio::test]
-async fn mytags_dedupe_keeps_one_row_per_track_and_tag() {}
+async fn mytags_dedupe_keeps_one_row_per_track_and_tag() {
+    let (db_path, _dir) = common::setup_db().await;
+    let pool = common::open_pool(&db_path).await;
+    seed_song_mytag(
+        &pool,
+        "9001",
+        "101",
+        "402",
+        "2026-08-01 00:00:00.000 +00:00",
+        0,
+    )
+    .await;
+    seed_song_mytag(
+        &pool,
+        "9002",
+        "101",
+        "402",
+        "2026-07-11 00:00:00.000 +00:00",
+        0,
+    )
+    .await;
+    seed_song_mytag(
+        &pool,
+        "9003",
+        "101",
+        "402",
+        "2026-09-01 00:00:00.000 +00:00",
+        0,
+    )
+    .await;
+    // Same created_at: the lower ID stays.
+    seed_song_mytag(
+        &pool,
+        "9004",
+        "102",
+        "403",
+        "2026-07-24 00:00:00.000 +00:00",
+        0,
+    )
+    .await;
+    seed_song_mytag(
+        &pool,
+        "9005",
+        "102",
+        "403",
+        "2026-07-24 00:00:00.000 +00:00",
+        0,
+    )
+    .await;
+    seed_song_mytag(&pool, "9006", "101", "403", common::SEED_TS, 0).await;
+    pool.close().await;
+
+    let assert = rbx_cmd(&db_path)
+        .args(["mytags", "dedupe", "--execute"])
+        .assert()
+        .code(0);
+    let json = stdout_json(&assert);
+    assert_eq!(json["kind"], "mytags.dedupe");
+    assert_eq!(json["dry_run"], false);
+    assert_eq!(json["result"]["removed_rows"], 3);
+
+    let pool = common::open_pool(&db_path).await;
+    let live = |rows: Vec<(String, i64, i64)>| -> Vec<String> {
+        rows.into_iter()
+            .filter(|(_, d, _)| *d == 0)
+            .map(|(id, _, _)| id)
+            .collect()
+    };
+    assert_eq!(
+        live(song_mytag_rows(&pool, "101", "402").await),
+        vec!["9002"]
+    );
+    assert_eq!(
+        live(song_mytag_rows(&pool, "102", "403").await),
+        vec!["9004"]
+    );
+    assert_eq!(
+        live(song_mytag_rows(&pool, "101", "403").await),
+        vec!["9006"]
+    );
+
+    let mut usns: Vec<i64> = sqlx::query_as::<_, (i64,)>(
+        "SELECT rb_local_usn FROM djmdSongMyTag WHERE rb_local_deleted = 1",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap()
+    .into_iter()
+    .map(|(u,)| u)
+    .collect();
+    usns.sort();
+    assert_eq!(usns, vec![1001, 1002, 1003]);
+    let (counter,): (i64,) =
+        sqlx::query_as("SELECT int_1 FROM agentRegistry WHERE registry_id = 'localUpdateCount'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(counter, 1003);
+}
 
 /// `mytags dedupe` dry-run counts tracks, pairs and rows to remove, and writes nothing.
 #[tokio::test]

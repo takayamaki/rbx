@@ -70,6 +70,7 @@ pub(crate) async fn handle_mytags(
             execute,
         } => handle_mytags_create(pool, &name, parent.as_deref(), execute).await,
         MytagsAction::Delete { id, execute } => handle_mytags_delete(pool, &id, execute).await,
+        MytagsAction::Dedupe { execute } => handle_mytags_dedupe(pool, execute).await,
     }
 }
 
@@ -259,6 +260,74 @@ async fn handle_mytags_delete(
         ),
         Err(e) => db_error(e),
     }
+}
+
+/// Live djmdSongMyTag rows that repeat a (ContentID, MyTagID) pair: every row but the oldest
+/// (lowest ID on a tie) of each pair.
+const DUPLICATE_ROWS: &str = "SELECT ID, ContentID, MyTagID FROM ( \
+     SELECT ID, ContentID, MyTagID, ROW_NUMBER() OVER ( \
+       PARTITION BY ContentID, MyTagID \
+       ORDER BY created_at IS NULL, created_at, ID) AS n \
+     FROM djmdSongMyTag WHERE rb_local_deleted = 0) \
+     WHERE n > 1 ORDER BY ContentID, MyTagID, ID";
+
+async fn handle_mytags_dedupe(pool: &SqlitePool, execute: bool) -> (serde_json::Value, i32) {
+    let rows = match sqlx::query_as::<_, (String, String, String)>(DUPLICATE_ROWS)
+        .fetch_all(pool)
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => return db_error(e),
+    };
+    let tracks: std::collections::HashSet<&str> = rows.iter().map(|(_, c, _)| c.as_str()).collect();
+    let pairs: std::collections::HashSet<(&str, &str)> = rows
+        .iter()
+        .map(|(_, c, t)| (c.as_str(), t.as_str()))
+        .collect();
+    let counts = serde_json::json!({
+        "tracks": tracks.len(),
+        "pairs": pairs.len(),
+        "removed_rows": rows.len(),
+    });
+
+    if !execute {
+        return (
+            output::mutation_dry_run("mytags.dedupe", counts, "Add --execute to apply"),
+            output::EXIT_OK,
+        );
+    }
+
+    let now = now_datetime();
+    sqlx::query("BEGIN").execute(pool).await.ok();
+    let mut usn = match allocate_usns(pool, rows.len() as i64).await {
+        Ok(v) => v,
+        Err(e) => {
+            sqlx::query("ROLLBACK").execute(pool).await.ok();
+            return db_error(e);
+        }
+    };
+    for (id, _, _) in &rows {
+        if let Err(e) = sqlx::query(
+            "UPDATE djmdSongMyTag SET rb_local_deleted = 1, rb_local_usn = ?, updated_at = ? \
+             WHERE ID = ?",
+        )
+        .bind(usn)
+        .bind(&now)
+        .bind(id)
+        .execute(pool)
+        .await
+        {
+            sqlx::query("ROLLBACK").execute(pool).await.ok();
+            return db_error(e);
+        }
+        usn += 1;
+    }
+    sqlx::query("COMMIT").execute(pool).await.ok();
+
+    (
+        output::mutation_done("mytags.dedupe", counts),
+        output::EXIT_OK,
+    )
 }
 
 // --- describe ---
