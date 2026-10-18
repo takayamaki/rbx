@@ -219,10 +219,10 @@ async fn handle_track_mytag_remove(
             }
             Err(e) => return db_error(e),
         };
-        let row_id = match sqlx::query_as::<_, (String,)>(
+        match sqlx::query_as::<_, (String,)>(
             "SELECT ID FROM djmdSongMyTag WHERE MyTagID = ? AND ContentID = ? AND rb_local_deleted = 0"
         ).bind(tid).bind(track_id).fetch_optional(pool).await {
-            Ok(Some((id,))) => id,
+            Ok(Some(_)) => {}
             Ok(None) => return (
                 output::error("not_found", output::EXIT_NOT_FOUND,
                     &format!("Tag '{}' is not assigned to '{}'", tag_name, title),
@@ -231,13 +231,13 @@ async fn handle_track_mytag_remove(
             ),
             Err(e) => return db_error(e),
         };
-        targets.push((tid.clone(), tag_name, row_id));
+        targets.push((tid.clone(), tag_name));
     }
 
     let plan = serde_json::json!({
         "action": "remove_tags",
         "track": { "id": track_id, "title": title },
-        "tags": targets.iter().map(|(id, name, _)| serde_json::json!({"id": id, "name": name})).collect::<Vec<_>>(),
+        "tags": targets.iter().map(|(id, name)| serde_json::json!({"id": id, "name": name})).collect::<Vec<_>>(),
     });
 
     if !execute {
@@ -249,12 +249,14 @@ async fn handle_track_mytag_remove(
 
     let now = now_datetime();
     sqlx::query("BEGIN").execute(pool).await.ok();
-    for (_, _, row_id) in &targets {
+    for (tid, _) in &targets {
         let _ = sqlx::query(
-            "UPDATE djmdSongMyTag SET rb_local_deleted = 1, updated_at = ? WHERE ID = ?",
+            "UPDATE djmdSongMyTag SET rb_local_deleted = 1, updated_at = ? \
+             WHERE MyTagID = ? AND ContentID = ? AND rb_local_deleted = 0",
         )
         .bind(&now)
-        .bind(row_id)
+        .bind(tid)
+        .bind(track_id)
         .execute(pool)
         .await;
     }

@@ -2666,9 +2666,71 @@ async fn grid_copy_missing_analysis_file_is_not_found() {
 // (seen on 2,700 tracks in a real master.db, 2026-10-15). rekordbox shows the tag once,
 // so a remove must soft-delete every live row of the pair or the tag stays on the track.
 
+/// Inserts a djmdSongMyTag row shaped like the ones rekordbox writes (TrackNo NULL).
+async fn seed_song_mytag(
+    pool: &sqlx::SqlitePool,
+    id: &str,
+    content_id: &str,
+    tag_id: &str,
+    created_at: &str,
+    deleted: i64,
+) {
+    sqlx::query(
+        "INSERT INTO djmdSongMyTag (ID, MyTagID, ContentID, UUID, rb_local_deleted, rb_local_usn, created_at, updated_at) \
+         VALUES (?, ?, ?, ?, ?, 10, ?, ?)",
+    )
+    .bind(id)
+    .bind(tag_id)
+    .bind(content_id)
+    .bind(format!("s0000000-0000-0000-0000-{:0>12}", id))
+    .bind(deleted)
+    .bind(created_at)
+    .bind(created_at)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+/// (ID, rb_local_deleted, rb_local_usn) of every row of a pair, by ID.
+async fn song_mytag_rows(
+    pool: &sqlx::SqlitePool,
+    content_id: &str,
+    tag_id: &str,
+) -> Vec<(String, i64, i64)> {
+    sqlx::query_as(
+        "SELECT ID, rb_local_deleted, rb_local_usn FROM djmdSongMyTag \
+         WHERE ContentID = ? AND MyTagID = ? ORDER BY ID",
+    )
+    .bind(content_id)
+    .bind(tag_id)
+    .fetch_all(pool)
+    .await
+    .unwrap()
+}
+
 /// `remove` soft-deletes every live row of the tag, not only the first one.
 #[tokio::test]
-async fn tracks_mytags_remove_removes_every_duplicate_row() {}
+async fn tracks_mytags_remove_removes_every_duplicate_row() {
+    let (db_path, _dir) = common::setup_db().await;
+    let pool = common::open_pool(&db_path).await;
+    for id in ["9001", "9002", "9003"] {
+        seed_song_mytag(&pool, id, "101", "402", common::SEED_TS, 0).await;
+    }
+    pool.close().await;
+
+    rbx_cmd(&db_path)
+        .args(["tracks", "mytags", "remove", "101", "402", "--execute"])
+        .assert()
+        .code(0);
+
+    let pool = common::open_pool(&db_path).await;
+    let deleted: Vec<i64> = song_mytag_rows(&pool, "101", "402")
+        .await
+        .into_iter()
+        .map(|(_, d, _)| d)
+        .collect();
+    assert_eq!(deleted, vec![1, 1, 1]);
+}
 
 /// `remove` gives each removed row a new USN within the agentRegistry counter, like `add` does.
 #[tokio::test]
