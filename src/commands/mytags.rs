@@ -4,7 +4,7 @@ use sqlx::sqlite::SqlitePool;
 use uuid::Uuid;
 
 use crate::cli::MytagsAction;
-use crate::commands::{db_error, resolve_tag_name};
+use crate::commands::{db_error, resolve_tag_name, soft_delete_song_mytags};
 use crate::rows::{MyTagRow, MyTagTrackRow};
 
 pub(crate) async fn handle_mytags(
@@ -299,28 +299,10 @@ async fn handle_mytags_dedupe(pool: &SqlitePool, execute: bool) -> (serde_json::
 
     let now = now_datetime();
     sqlx::query("BEGIN").execute(pool).await.ok();
-    let mut usn = match allocate_usns(pool, rows.len() as i64).await {
-        Ok(v) => v,
-        Err(e) => {
-            sqlx::query("ROLLBACK").execute(pool).await.ok();
-            return db_error(e);
-        }
-    };
-    for (id, _, _) in &rows {
-        if let Err(e) = sqlx::query(
-            "UPDATE djmdSongMyTag SET rb_local_deleted = 1, rb_local_usn = ?, updated_at = ? \
-             WHERE ID = ?",
-        )
-        .bind(usn)
-        .bind(&now)
-        .bind(id)
-        .execute(pool)
-        .await
-        {
-            sqlx::query("ROLLBACK").execute(pool).await.ok();
-            return db_error(e);
-        }
-        usn += 1;
+    let ids: Vec<String> = rows.iter().map(|(id, _, _)| id.clone()).collect();
+    if let Err(e) = soft_delete_song_mytags(pool, &ids, &now).await {
+        sqlx::query("ROLLBACK").execute(pool).await.ok();
+        return db_error(e);
     }
     sqlx::query("COMMIT").execute(pool).await.ok();
 

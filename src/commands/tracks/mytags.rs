@@ -4,7 +4,7 @@ use sqlx::sqlite::SqlitePool;
 use uuid::Uuid;
 
 use crate::cli::TrackMytagsAction;
-use crate::commands::{db_error, resolve_tag_name, resolve_track_summary};
+use crate::commands::{db_error, resolve_tag_name, resolve_track_summary, soft_delete_song_mytags};
 use crate::rows::TrackMyTagRow;
 
 pub(crate) async fn handle_track_mytags(
@@ -362,20 +362,7 @@ async fn remove_rows(
         .await?;
         row_ids.extend(rows.into_iter().map(|(id,)| id));
     }
-    let mut usn = allocate_usns(pool, row_ids.len() as i64).await?;
-    for row_id in &row_ids {
-        sqlx::query(
-            "UPDATE djmdSongMyTag SET rb_local_deleted = 1, rb_local_usn = ?, updated_at = ? \
-             WHERE ID = ?",
-        )
-        .bind(usn)
-        .bind(now)
-        .bind(row_id)
-        .execute(pool)
-        .await?;
-        usn += 1;
-    }
-    Ok(())
+    soft_delete_song_mytags(pool, &row_ids, now).await
 }
 
 // --- describe ---
