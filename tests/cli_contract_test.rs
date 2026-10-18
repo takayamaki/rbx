@@ -2660,3 +2660,50 @@ async fn grid_copy_missing_analysis_file_is_not_found() {
         .code(3);
     assert_eq!(stdout_json(&assert)["error"]["category"], "not_found");
 }
+
+// --- My Tag duplicate rows ---
+// rekordbox itself sometimes writes the same (ContentID, MyTagID) pair more than once
+// (seen on 2,700 tracks in a real master.db, 2026-10-15). rekordbox shows the tag once,
+// so a remove must soft-delete every live row of the pair or the tag stays on the track.
+
+/// `remove` soft-deletes every live row of the tag, not only the first one.
+#[tokio::test]
+async fn tracks_mytags_remove_removes_every_duplicate_row() {}
+
+/// `remove` gives each removed row a new USN within the agentRegistry counter, like `add` does.
+#[tokio::test]
+async fn tracks_mytags_remove_allocates_usns() {}
+
+/// `remove` dry-run shows how many rows each tag has.
+#[tokio::test]
+async fn tracks_mytags_remove_dry_run_shows_row_counts() {}
+
+/// `add TRACK X X` inserts one row.
+#[tokio::test]
+async fn tracks_mytags_add_same_tag_twice_inserts_one_row() {}
+
+/// `add` of a tag the track already has with duplicate rows says how many rows it has,
+/// points to `mytags dedupe`, and leaves the rows as they are.
+#[tokio::test]
+async fn tracks_mytags_add_reports_duplicate_rows_and_leaves_them() {}
+
+/// `tracks mytags list` shows the row count of a duplicated tag and points to `mytags dedupe`.
+#[tokio::test]
+async fn tracks_mytags_list_reports_duplicate_rows() {}
+
+/// `mytags dedupe --execute` keeps the oldest row of each pair and soft-deletes the others
+/// with new USNs, in one transaction.
+#[tokio::test]
+async fn mytags_dedupe_keeps_one_row_per_track_and_tag() {}
+
+/// `mytags dedupe` dry-run counts tracks, pairs and rows to remove, and writes nothing.
+#[tokio::test]
+async fn mytags_dedupe_dry_run_counts_and_writes_nothing() {}
+
+/// With no duplicates, `mytags dedupe --execute` succeeds and removes nothing.
+#[tokio::test]
+async fn mytags_dedupe_without_duplicates_removes_nothing() {}
+
+/// A deleted row next to one live row is not a duplicate.
+#[tokio::test]
+async fn mytags_dedupe_ignores_deleted_rows() {}
