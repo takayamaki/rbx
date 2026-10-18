@@ -2846,7 +2846,43 @@ async fn tracks_mytags_add_reports_duplicate_rows_and_leaves_them() {
 
 /// `tracks mytags list` shows the row count of a duplicated tag and points to `mytags dedupe`.
 #[tokio::test]
-async fn tracks_mytags_list_reports_duplicate_rows() {}
+async fn tracks_mytags_list_reports_duplicate_rows() {
+    let (db_path, _dir) = common::setup_db().await;
+    let pool = common::open_pool(&db_path).await;
+    for id in ["9001", "9002", "9003"] {
+        seed_song_mytag(&pool, id, "101", "402", common::SEED_TS, 0).await;
+    }
+    seed_song_mytag(&pool, "9004", "101", "403", common::SEED_TS, 0).await;
+    pool.close().await;
+
+    let assert = rbx_cmd(&db_path)
+        .args(["tracks", "mytags", "list", "101"])
+        .assert()
+        .code(0);
+    let json = stdout_json(&assert);
+
+    let mut rows: Vec<(String, i64)> = json["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| {
+            (
+                t["tag_id"].as_str().unwrap().to_string(),
+                t["rows"].as_i64().unwrap(),
+            )
+        })
+        .collect();
+    rows.sort();
+    assert_eq!(rows, vec![("402".to_string(), 3), ("403".to_string(), 1)]);
+    assert!(
+        json["next_step"]
+            .as_str()
+            .unwrap()
+            .contains("rbx mytags dedupe"),
+        "next_step: {}",
+        json["next_step"]
+    );
+}
 
 /// `mytags dedupe --execute` keeps the oldest row of each pair and soft-deletes the others
 /// with new USNs, in one transaction.

@@ -30,11 +30,13 @@ pub(crate) async fn handle_track_mytags(
                 );
             }
             match sqlx::query_as::<_, TrackMyTagRow>(
-                "SELECT DISTINCT t.ID as tag_id, t.Name as tag_name, p.Name as category_name \
+                "SELECT t.ID as tag_id, t.Name as tag_name, p.Name as category_name, \
+                 COUNT(*) as rows \
                  FROM djmdSongMyTag smt \
                  JOIN djmdMyTag t ON smt.MyTagID = t.ID \
                  LEFT JOIN djmdMyTag p ON t.ParentID = p.ID \
-                 WHERE smt.ContentID = ? AND smt.rb_local_deleted = 0 AND t.rb_local_deleted = 0",
+                 WHERE smt.ContentID = ? AND smt.rb_local_deleted = 0 AND t.rb_local_deleted = 0 \
+                 GROUP BY t.ID",
             )
             .bind(&track_id)
             .fetch_all(pool)
@@ -42,10 +44,11 @@ pub(crate) async fn handle_track_mytags(
             {
                 Ok(rows) => {
                     let items: Vec<_> = rows.iter().map(|r| r.to_json()).collect();
-                    (
-                        output::success("track_mytags", serde_json::Value::Array(items)),
-                        output::EXIT_OK,
-                    )
+                    let mut out = output::success("track_mytags", serde_json::Value::Array(items));
+                    if let Some(h) = duplicate_hint(rows.iter().map(|r| (r.tag_id(), r.rows()))) {
+                        out["next_step"] = serde_json::Value::String(h);
+                    }
+                    (out, output::EXIT_OK)
                 }
                 Err(e) => db_error(e),
             }
@@ -125,7 +128,12 @@ async fn handle_track_mytag_add(
         "skipped_already_assigned": skipped,
     });
 
-    let dedupe_hint = duplicate_hint(&skipped);
+    let dedupe_hint = duplicate_hint(skipped.iter().map(|t| {
+        (
+            t["id"].as_str().unwrap_or(""),
+            t["rows"].as_i64().unwrap_or(0),
+        )
+    }));
 
     if tags.is_empty() {
         return (
@@ -321,11 +329,10 @@ async fn count_rows(pool: &SqlitePool, track_id: &str, tag_id: &str) -> Result<i
 }
 
 /// A next_step pointing to `mytags dedupe` when some tag has more than one row.
-fn duplicate_hint(tags: &[serde_json::Value]) -> Option<String> {
+fn duplicate_hint<'a>(tags: impl Iterator<Item = (&'a str, i64)>) -> Option<String> {
     let dups: Vec<String> = tags
-        .iter()
-        .filter(|t| t["rows"].as_i64().unwrap_or(0) > 1)
-        .map(|t| format!("{} ({} rows)", t["id"].as_str().unwrap_or(""), t["rows"]))
+        .filter(|(_, rows)| *rows > 1)
+        .map(|(id, rows)| format!("{} ({} rows)", id, rows))
         .collect();
     if dups.is_empty() {
         return None;
