@@ -219,11 +219,11 @@ async fn handle_track_mytag_remove(
             }
             Err(e) => return db_error(e),
         };
-        match sqlx::query_as::<_, (String,)>(
-            "SELECT ID FROM djmdSongMyTag WHERE MyTagID = ? AND ContentID = ? AND rb_local_deleted = 0"
-        ).bind(tid).bind(track_id).fetch_optional(pool).await {
-            Ok(Some(_)) => {}
-            Ok(None) => return (
+        let rows = match sqlx::query_as::<_, (i64,)>(
+            "SELECT COUNT(*) FROM djmdSongMyTag WHERE MyTagID = ? AND ContentID = ? AND rb_local_deleted = 0"
+        ).bind(tid).bind(track_id).fetch_one(pool).await {
+            Ok((n,)) if n > 0 => n,
+            Ok(_) => return (
                 output::error("not_found", output::EXIT_NOT_FOUND,
                     &format!("Tag '{}' is not assigned to '{}'", tag_name, title),
                     None),
@@ -231,13 +231,13 @@ async fn handle_track_mytag_remove(
             ),
             Err(e) => return db_error(e),
         };
-        targets.push((tid.clone(), tag_name));
+        targets.push((tid.clone(), tag_name, rows));
     }
 
     let plan = serde_json::json!({
         "action": "remove_tags",
         "track": { "id": track_id, "title": title },
-        "tags": targets.iter().map(|(id, name)| serde_json::json!({"id": id, "name": name})).collect::<Vec<_>>(),
+        "tags": targets.iter().map(|(id, name, rows)| serde_json::json!({"id": id, "name": name, "rows": rows})).collect::<Vec<_>>(),
     });
 
     if !execute {
@@ -271,11 +271,11 @@ async fn handle_track_mytag_remove(
 async fn remove_rows(
     pool: &SqlitePool,
     track_id: &str,
-    targets: &[(String, String)],
+    targets: &[(String, String, i64)],
     now: &str,
 ) -> Result<(), sqlx::Error> {
     let mut row_ids = Vec::new();
-    for (tid, _) in targets {
+    for (tid, _, _) in targets {
         let rows = sqlx::query_as::<_, (String,)>(
             "SELECT ID FROM djmdSongMyTag \
              WHERE MyTagID = ? AND ContentID = ? AND rb_local_deleted = 0 ORDER BY ID",

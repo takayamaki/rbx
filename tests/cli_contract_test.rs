@@ -2764,7 +2764,32 @@ async fn tracks_mytags_remove_allocates_usns() {
 
 /// `remove` dry-run shows how many rows each tag has.
 #[tokio::test]
-async fn tracks_mytags_remove_dry_run_shows_row_counts() {}
+async fn tracks_mytags_remove_dry_run_shows_row_counts() {
+    let (db_path, _dir) = common::setup_db().await;
+    let pool = common::open_pool(&db_path).await;
+    for id in ["9001", "9002"] {
+        seed_song_mytag(&pool, id, "101", "402", common::SEED_TS, 0).await;
+    }
+    seed_song_mytag(&pool, "9003", "101", "403", common::SEED_TS, 0).await;
+    pool.close().await;
+
+    let assert = rbx_cmd(&db_path)
+        .args(["tracks", "mytags", "remove", "101", "402", "403"])
+        .assert()
+        .code(0);
+    let json = stdout_json(&assert);
+
+    assert_eq!(json["dry_run"], true);
+    let tags = json["plan"]["tags"].as_array().unwrap();
+    assert_eq!(
+        (tags[0]["id"].as_str(), tags[0]["rows"].as_i64()),
+        (Some("402"), Some(2))
+    );
+    assert_eq!(
+        (tags[1]["id"].as_str(), tags[1]["rows"].as_i64()),
+        (Some("403"), Some(1))
+    );
+}
 
 /// `add TRACK X X` inserts one row.
 #[tokio::test]
