@@ -350,6 +350,12 @@ pub(crate) enum MytagsAction {
         #[arg(long)]
         execute: bool,
     },
+    /// Merge duplicate rows of the same tag on the same track into one (dry-run by default)
+    Dedupe {
+        /// Actually apply the change
+        #[arg(long)]
+        execute: bool,
+    },
 }
 
 pub(crate) fn needs_write(cmd: &Commands) -> bool {
@@ -375,7 +381,8 @@ pub(crate) fn needs_write(cmd: &Commands) -> bool {
                 }
         } | Commands::Mytags {
             action: MytagsAction::Create { execute: true, .. }
-                | MytagsAction::Delete { execute: true, .. },
+                | MytagsAction::Delete { execute: true, .. }
+                | MytagsAction::Dedupe { execute: true },
         } | Commands::Playlists {
             action: PlaylistsAction::Create { execute: true, .. }
                 | PlaylistsAction::Delete { execute: true, .. }

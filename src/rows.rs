@@ -127,14 +127,24 @@ pub(crate) struct TrackMyTagRow {
     tag_id: String,
     tag_name: Option<String>,
     category_name: Option<String>,
+    rows: i64,
 }
 
 impl TrackMyTagRow {
+    pub(crate) fn tag_id(&self) -> &str {
+        &self.tag_id
+    }
+
+    pub(crate) fn rows(&self) -> i64 {
+        self.rows
+    }
+
     pub(crate) fn to_json(&self) -> serde_json::Value {
         serde_json::json!({
             "tag_id": self.tag_id,
             "tag_name": self.tag_name,
             "category_name": self.category_name,
+            "rows": self.rows,
         })
     }
 }

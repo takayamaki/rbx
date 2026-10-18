@@ -4,7 +4,7 @@ use sqlx::sqlite::SqlitePool;
 use uuid::Uuid;
 
 use crate::cli::TrackMytagsAction;
-use crate::commands::{db_error, resolve_tag_name, resolve_track_summary};
+use crate::commands::{db_error, resolve_tag_name, resolve_track_summary, soft_delete_song_mytags};
 use crate::rows::TrackMyTagRow;
 
 pub(crate) async fn handle_track_mytags(
@@ -30,11 +30,13 @@ pub(crate) async fn handle_track_mytags(
                 );
             }
             match sqlx::query_as::<_, TrackMyTagRow>(
-                "SELECT DISTINCT t.ID as tag_id, t.Name as tag_name, p.Name as category_name \
+                "SELECT t.ID as tag_id, t.Name as tag_name, p.Name as category_name, \
+                 COUNT(*) as rows \
                  FROM djmdSongMyTag smt \
                  JOIN djmdMyTag t ON smt.MyTagID = t.ID \
                  LEFT JOIN djmdMyTag p ON t.ParentID = p.ID \
-                 WHERE smt.ContentID = ? AND smt.rb_local_deleted = 0 AND t.rb_local_deleted = 0",
+                 WHERE smt.ContentID = ? AND smt.rb_local_deleted = 0 AND t.rb_local_deleted = 0 \
+                 GROUP BY t.ID",
             )
             .bind(&track_id)
             .fetch_all(pool)
@@ -42,10 +44,11 @@ pub(crate) async fn handle_track_mytags(
             {
                 Ok(rows) => {
                     let items: Vec<_> = rows.iter().map(|r| r.to_json()).collect();
-                    (
-                        output::success("track_mytags", serde_json::Value::Array(items)),
-                        output::EXIT_OK,
-                    )
+                    let mut out = output::success("track_mytags", serde_json::Value::Array(items));
+                    if let Some(h) = duplicate_hint(rows.iter().map(|r| (r.tag_id(), r.rows()))) {
+                        out["next_step"] = serde_json::Value::String(h);
+                    }
+                    (out, output::EXIT_OK)
                 }
                 Err(e) => db_error(e),
             }
@@ -87,7 +90,11 @@ async fn handle_track_mytag_add(
 
     let mut tags = Vec::new();
     let mut skipped = Vec::new();
+    let mut seen = std::collections::HashSet::new();
     for tid in tag_ids {
+        if !seen.insert(tid) {
+            continue;
+        }
         let tag_name = match resolve_tag_name(pool, tid).await {
             Ok(Some(n)) => n,
             Ok(None) => {
@@ -103,11 +110,12 @@ async fn handle_track_mytag_add(
             }
             Err(e) => return db_error(e),
         };
-        let exists = sqlx::query_as::<_, (i32,)>(
-            "SELECT 1 FROM djmdSongMyTag WHERE MyTagID = ? AND ContentID = ? AND rb_local_deleted = 0"
-        ).bind(tid).bind(track_id).fetch_optional(pool).await.ok().flatten().is_some();
-        if exists {
-            skipped.push(serde_json::json!({ "id": tid, "name": tag_name }));
+        let rows = match count_rows(pool, track_id, tid).await {
+            Ok(n) => n,
+            Err(e) => return db_error(e),
+        };
+        if rows > 0 {
+            skipped.push(serde_json::json!({ "id": tid, "name": tag_name, "rows": rows }));
         } else {
             tags.push((tid.clone(), tag_name));
         }
@@ -120,21 +128,32 @@ async fn handle_track_mytag_add(
         "skipped_already_assigned": skipped,
     });
 
+    let dedupe_hint = duplicate_hint(skipped.iter().map(|t| {
+        (
+            t["id"].as_str().unwrap_or(""),
+            t["rows"].as_i64().unwrap_or(0),
+        )
+    }));
+
     if tags.is_empty() {
         return (
             output::error(
                 "conflict",
                 output::EXIT_CONFLICT,
                 "All specified tags are already assigned",
-                None,
+                dedupe_hint.as_deref(),
             ),
             output::EXIT_CONFLICT,
         );
     }
 
     if !execute {
+        let next_step = match &dedupe_hint {
+            Some(h) => format!("Add --execute to apply. {}", h),
+            None => "Add --execute to apply".to_string(),
+        };
         return (
-            output::mutation_dry_run("tracks.mytags.add", plan, "Add --execute to apply"),
+            output::mutation_dry_run("tracks.mytags.add", plan, &next_step),
             output::EXIT_OK,
         );
     }
@@ -142,6 +161,31 @@ async fn handle_track_mytag_add(
     let now = now_datetime();
     let mut added = Vec::new();
     sqlx::query("BEGIN").execute(pool).await.ok();
+    // rekordbox may have written a row since the check above; check again inside the transaction.
+    for (tid, tag_name) in &tags {
+        match count_rows(pool, track_id, tid).await {
+            Ok(0) => {}
+            Ok(_) => {
+                sqlx::query("ROLLBACK").execute(pool).await.ok();
+                return (
+                    output::error(
+                        "conflict",
+                        output::EXIT_CONFLICT,
+                        &format!(
+                            "Tag '{}' was assigned while adding; nothing was changed",
+                            tag_name
+                        ),
+                        Some("Run the command again"),
+                    ),
+                    output::EXIT_CONFLICT,
+                );
+            }
+            Err(e) => {
+                sqlx::query("ROLLBACK").execute(pool).await.ok();
+                return db_error(e);
+            }
+        }
+    }
     let mut base_usn = match allocate_usns(pool, tags.len() as i64).await {
         Ok(v) => v,
         Err(e) => {
@@ -167,17 +211,18 @@ async fn handle_track_mytag_add(
     }
     sqlx::query("COMMIT").execute(pool).await.ok();
 
-    (
-        output::mutation_done(
-            "tracks.mytags.add",
-            serde_json::json!({
-                "track": { "id": track_id, "title": title, "artist": artist },
-                "added": added,
-                "skipped": skipped,
-            }),
-        ),
-        output::EXIT_OK,
-    )
+    let mut done = output::mutation_done(
+        "tracks.mytags.add",
+        serde_json::json!({
+            "track": { "id": track_id, "title": title, "artist": artist },
+            "added": added,
+            "skipped": skipped,
+        }),
+    );
+    if let Some(h) = dedupe_hint {
+        done["next_step"] = serde_json::Value::String(h);
+    }
+    (done, output::EXIT_OK)
 }
 
 async fn handle_track_mytag_remove(
@@ -219,25 +264,28 @@ async fn handle_track_mytag_remove(
             }
             Err(e) => return db_error(e),
         };
-        let row_id = match sqlx::query_as::<_, (String,)>(
-            "SELECT ID FROM djmdSongMyTag WHERE MyTagID = ? AND ContentID = ? AND rb_local_deleted = 0"
-        ).bind(tid).bind(track_id).fetch_optional(pool).await {
-            Ok(Some((id,))) => id,
-            Ok(None) => return (
-                output::error("not_found", output::EXIT_NOT_FOUND,
-                    &format!("Tag '{}' is not assigned to '{}'", tag_name, title),
-                    None),
-                output::EXIT_NOT_FOUND,
-            ),
+        let rows = match count_rows(pool, track_id, tid).await {
+            Ok(n) if n > 0 => n,
+            Ok(_) => {
+                return (
+                    output::error(
+                        "not_found",
+                        output::EXIT_NOT_FOUND,
+                        &format!("Tag '{}' is not assigned to '{}'", tag_name, title),
+                        None,
+                    ),
+                    output::EXIT_NOT_FOUND,
+                )
+            }
             Err(e) => return db_error(e),
         };
-        targets.push((tid.clone(), tag_name, row_id));
+        targets.push((tid.clone(), tag_name, rows));
     }
 
     let plan = serde_json::json!({
         "action": "remove_tags",
         "track": { "id": track_id, "title": title },
-        "tags": targets.iter().map(|(id, name, _)| serde_json::json!({"id": id, "name": name})).collect::<Vec<_>>(),
+        "tags": targets.iter().map(|(id, name, rows)| serde_json::json!({"id": id, "name": name, "rows": rows})).collect::<Vec<_>>(),
     });
 
     if !execute {
@@ -249,14 +297,9 @@ async fn handle_track_mytag_remove(
 
     let now = now_datetime();
     sqlx::query("BEGIN").execute(pool).await.ok();
-    for (_, _, row_id) in &targets {
-        let _ = sqlx::query(
-            "UPDATE djmdSongMyTag SET rb_local_deleted = 1, updated_at = ? WHERE ID = ?",
-        )
-        .bind(&now)
-        .bind(row_id)
-        .execute(pool)
-        .await;
+    if let Err(e) = remove_rows(pool, track_id, &targets, &now).await {
+        sqlx::query("ROLLBACK").execute(pool).await.ok();
+        return db_error(e);
     }
     sqlx::query("COMMIT").execute(pool).await.ok();
 
@@ -270,6 +313,56 @@ async fn handle_track_mytag_remove(
         ),
         output::EXIT_OK,
     )
+}
+
+/// Number of live rows of a tag on a track. rekordbox sometimes writes the same pair more than once.
+async fn count_rows(pool: &SqlitePool, track_id: &str, tag_id: &str) -> Result<i64, sqlx::Error> {
+    let (n,) = sqlx::query_as::<_, (i64,)>(
+        "SELECT COUNT(*) FROM djmdSongMyTag \
+         WHERE MyTagID = ? AND ContentID = ? AND rb_local_deleted = 0",
+    )
+    .bind(tag_id)
+    .bind(track_id)
+    .fetch_one(pool)
+    .await?;
+    Ok(n)
+}
+
+/// A next_step pointing to `mytags dedupe` when some tag has more than one row.
+fn duplicate_hint<'a>(tags: impl Iterator<Item = (&'a str, i64)>) -> Option<String> {
+    let dups: Vec<String> = tags
+        .filter(|(_, rows)| *rows > 1)
+        .map(|(id, rows)| format!("{} ({} rows)", id, rows))
+        .collect();
+    if dups.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "Tags with duplicate rows on this track: {}. Run 'rbx mytags dedupe' to merge them",
+        dups.join(", ")
+    ))
+}
+
+/// Soft-deletes every live row of each tag on the track, giving each row a new USN.
+async fn remove_rows(
+    pool: &SqlitePool,
+    track_id: &str,
+    targets: &[(String, String, i64)],
+    now: &str,
+) -> Result<(), sqlx::Error> {
+    let mut row_ids = Vec::new();
+    for (tid, _, _) in targets {
+        let rows = sqlx::query_as::<_, (String,)>(
+            "SELECT ID FROM djmdSongMyTag \
+             WHERE MyTagID = ? AND ContentID = ? AND rb_local_deleted = 0 ORDER BY ID",
+        )
+        .bind(tid)
+        .bind(track_id)
+        .fetch_all(pool)
+        .await?;
+        row_ids.extend(rows.into_iter().map(|(id,)| id));
+    }
+    soft_delete_song_mytags(pool, &row_ids, now).await
 }
 
 // --- describe ---
@@ -288,6 +381,7 @@ pub(crate) fn describe(action: &str) -> Option<serde_json::Value> {
                         "tag_id": { "type": "string" },
                         "tag_name": { "type": "string|null" },
                         "category_name": { "type": "string|null" },
+                        "rows": { "type": "integer", "description": "Rows of this tag on the track; more than 1 means duplicates (see mytags dedupe)" },
                     },
                 },
             }),

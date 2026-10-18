@@ -4,7 +4,7 @@ use sqlx::sqlite::SqlitePool;
 use uuid::Uuid;
 
 use crate::cli::MytagsAction;
-use crate::commands::{db_error, resolve_tag_name};
+use crate::commands::{db_error, resolve_tag_name, soft_delete_song_mytags};
 use crate::rows::{MyTagRow, MyTagTrackRow};
 
 pub(crate) async fn handle_mytags(
@@ -70,6 +70,7 @@ pub(crate) async fn handle_mytags(
             execute,
         } => handle_mytags_create(pool, &name, parent.as_deref(), execute).await,
         MytagsAction::Delete { id, execute } => handle_mytags_delete(pool, &id, execute).await,
+        MytagsAction::Dedupe { execute } => handle_mytags_dedupe(pool, execute).await,
     }
 }
 
@@ -261,6 +262,56 @@ async fn handle_mytags_delete(
     }
 }
 
+/// Live djmdSongMyTag rows that repeat a (ContentID, MyTagID) pair: every row but the oldest
+/// (lowest ID on a tie) of each pair.
+const DUPLICATE_ROWS: &str = "SELECT ID, ContentID, MyTagID FROM ( \
+     SELECT ID, ContentID, MyTagID, ROW_NUMBER() OVER ( \
+       PARTITION BY ContentID, MyTagID \
+       ORDER BY created_at IS NULL, created_at, ID) AS n \
+     FROM djmdSongMyTag WHERE rb_local_deleted = 0) \
+     WHERE n > 1 ORDER BY ContentID, MyTagID, ID";
+
+async fn handle_mytags_dedupe(pool: &SqlitePool, execute: bool) -> (serde_json::Value, i32) {
+    let rows = match sqlx::query_as::<_, (String, String, String)>(DUPLICATE_ROWS)
+        .fetch_all(pool)
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => return db_error(e),
+    };
+    let tracks: std::collections::HashSet<&str> = rows.iter().map(|(_, c, _)| c.as_str()).collect();
+    let pairs: std::collections::HashSet<(&str, &str)> = rows
+        .iter()
+        .map(|(_, c, t)| (c.as_str(), t.as_str()))
+        .collect();
+    let counts = serde_json::json!({
+        "tracks": tracks.len(),
+        "pairs": pairs.len(),
+        "removed_rows": rows.len(),
+    });
+
+    if !execute {
+        return (
+            output::mutation_dry_run("mytags.dedupe", counts, "Add --execute to apply"),
+            output::EXIT_OK,
+        );
+    }
+
+    let now = now_datetime();
+    sqlx::query("BEGIN").execute(pool).await.ok();
+    let ids: Vec<String> = rows.iter().map(|(id, _, _)| id.clone()).collect();
+    if let Err(e) = soft_delete_song_mytags(pool, &ids, &now).await {
+        sqlx::query("ROLLBACK").execute(pool).await.ok();
+        return db_error(e);
+    }
+    sqlx::query("COMMIT").execute(pool).await.ok();
+
+    (
+        output::mutation_done("mytags.dedupe", counts),
+        output::EXIT_OK,
+    )
+}
+
 // --- describe ---
 
 use crate::describe::{describe_command, describe_resource, flag, mutation_result_schema};
@@ -277,6 +328,10 @@ pub(crate) fn describe(action: Option<&str>) -> Option<serde_json::Value> {
                     "Create a new My Tag or category (dry-run by default)",
                 ),
                 ("delete", "Delete a My Tag (dry-run by default)"),
+                (
+                    "dedupe",
+                    "Merge duplicate rows of a tag on a track into one (dry-run by default)",
+                ),
             ],
         ),
         Some("list") => describe_command(
@@ -334,6 +389,26 @@ pub(crate) fn describe(action: Option<&str>) -> Option<serde_json::Value> {
                 "rbx mytags delete TAG_ID",
                 "rbx mytags delete TAG_ID --execute",
             ],
+        ),
+
+        Some("dedupe") => describe_command(
+            "mytags dedupe",
+            &[flag(
+                "--execute",
+                "bool",
+                false,
+                "Actually apply the change (default: dry-run)",
+            )],
+            &serde_json::json!({
+                "type": "object",
+                "description": "dry-run: plan, --execute: result",
+                "properties": {
+                    "tracks": { "type": "integer", "description": "Tracks with duplicate rows" },
+                    "pairs": { "type": "integer", "description": "Track and tag pairs with duplicate rows" },
+                    "removed_rows": { "type": "integer", "description": "Rows removed (all but the oldest of each pair)" },
+                },
+            }),
+            &["rbx mytags dedupe", "rbx mytags dedupe --execute"],
         ),
 
         // history
