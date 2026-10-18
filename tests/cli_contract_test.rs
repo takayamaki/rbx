@@ -2734,7 +2734,33 @@ async fn tracks_mytags_remove_removes_every_duplicate_row() {
 
 /// `remove` gives each removed row a new USN within the agentRegistry counter, like `add` does.
 #[tokio::test]
-async fn tracks_mytags_remove_allocates_usns() {}
+async fn tracks_mytags_remove_allocates_usns() {
+    let (db_path, _dir) = common::setup_db().await;
+    let pool = common::open_pool(&db_path).await;
+    for id in ["9001", "9002"] {
+        seed_song_mytag(&pool, id, "101", "402", common::SEED_TS, 0).await;
+    }
+    pool.close().await;
+
+    rbx_cmd(&db_path)
+        .args(["tracks", "mytags", "remove", "101", "402", "--execute"])
+        .assert()
+        .code(0);
+
+    let pool = common::open_pool(&db_path).await;
+    let usns: Vec<i64> = song_mytag_rows(&pool, "101", "402")
+        .await
+        .into_iter()
+        .map(|(_, _, u)| u)
+        .collect();
+    assert_eq!(usns, vec![1001, 1002], "a block from seeded counter 1000");
+    let (counter,): (i64,) =
+        sqlx::query_as("SELECT int_1 FROM agentRegistry WHERE registry_id = 'localUpdateCount'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(counter, 1002);
+}
 
 /// `remove` dry-run shows how many rows each tag has.
 #[tokio::test]

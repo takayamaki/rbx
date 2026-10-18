@@ -249,16 +249,9 @@ async fn handle_track_mytag_remove(
 
     let now = now_datetime();
     sqlx::query("BEGIN").execute(pool).await.ok();
-    for (tid, _) in &targets {
-        let _ = sqlx::query(
-            "UPDATE djmdSongMyTag SET rb_local_deleted = 1, updated_at = ? \
-             WHERE MyTagID = ? AND ContentID = ? AND rb_local_deleted = 0",
-        )
-        .bind(&now)
-        .bind(tid)
-        .bind(track_id)
-        .execute(pool)
-        .await;
+    if let Err(e) = remove_rows(pool, track_id, &targets, &now).await {
+        sqlx::query("ROLLBACK").execute(pool).await.ok();
+        return db_error(e);
     }
     sqlx::query("COMMIT").execute(pool).await.ok();
 
@@ -272,6 +265,41 @@ async fn handle_track_mytag_remove(
         ),
         output::EXIT_OK,
     )
+}
+
+/// Soft-deletes every live row of each tag on the track, giving each row a new USN.
+async fn remove_rows(
+    pool: &SqlitePool,
+    track_id: &str,
+    targets: &[(String, String)],
+    now: &str,
+) -> Result<(), sqlx::Error> {
+    let mut row_ids = Vec::new();
+    for (tid, _) in targets {
+        let rows = sqlx::query_as::<_, (String,)>(
+            "SELECT ID FROM djmdSongMyTag \
+             WHERE MyTagID = ? AND ContentID = ? AND rb_local_deleted = 0 ORDER BY ID",
+        )
+        .bind(tid)
+        .bind(track_id)
+        .fetch_all(pool)
+        .await?;
+        row_ids.extend(rows.into_iter().map(|(id,)| id));
+    }
+    let mut usn = allocate_usns(pool, row_ids.len() as i64).await?;
+    for row_id in &row_ids {
+        sqlx::query(
+            "UPDATE djmdSongMyTag SET rb_local_deleted = 1, rb_local_usn = ?, updated_at = ? \
+             WHERE ID = ?",
+        )
+        .bind(usn)
+        .bind(now)
+        .bind(row_id)
+        .execute(pool)
+        .await?;
+        usn += 1;
+    }
+    Ok(())
 }
 
 // --- describe ---
