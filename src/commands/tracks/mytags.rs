@@ -87,7 +87,11 @@ async fn handle_track_mytag_add(
 
     let mut tags = Vec::new();
     let mut skipped = Vec::new();
+    let mut seen = std::collections::HashSet::new();
     for tid in tag_ids {
+        if !seen.insert(tid) {
+            continue;
+        }
         let tag_name = match resolve_tag_name(pool, tid).await {
             Ok(Some(n)) => n,
             Ok(None) => {

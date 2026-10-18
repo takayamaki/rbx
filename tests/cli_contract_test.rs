@@ -2793,7 +2793,17 @@ async fn tracks_mytags_remove_dry_run_shows_row_counts() {
 
 /// `add TRACK X X` inserts one row.
 #[tokio::test]
-async fn tracks_mytags_add_same_tag_twice_inserts_one_row() {}
+async fn tracks_mytags_add_same_tag_twice_inserts_one_row() {
+    let (db_path, _dir) = common::setup_db().await;
+
+    rbx_cmd(&db_path)
+        .args(["tracks", "mytags", "add", "101", "402", "402", "--execute"])
+        .assert()
+        .code(0);
+
+    let pool = common::open_pool(&db_path).await;
+    assert_eq!(song_mytag_rows(&pool, "101", "402").await.len(), 1);
+}
 
 /// `add` of a tag the track already has with duplicate rows says how many rows it has,
 /// points to `mytags dedupe`, and leaves the rows as they are.
