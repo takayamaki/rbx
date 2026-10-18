@@ -381,6 +381,7 @@ pub(crate) fn describe(action: &str) -> Option<serde_json::Value> {
                         "tag_id": { "type": "string" },
                         "tag_name": { "type": "string|null" },
                         "category_name": { "type": "string|null" },
+                        "rows": { "type": "integer", "description": "Rows of this tag on the track; more than 1 means duplicates (see mytags dedupe)" },
                     },
                 },
             }),

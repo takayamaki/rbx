@@ -196,6 +196,10 @@ rbx tracks mytags remove <track_id> <tag_id>
                                        # タグ外し（dry-run）
 ```
 
+rekordbox は同じ曲に同じタグの行を 2 本以上書くことがある。
+`list` と `add` はタグの行数（`rows`）を出し、2 本以上あれば `mytags dedupe` を案内する。
+`remove` はそのタグの行をすべて外す。
+
 ### playlists（プレイリスト操作）
 
 ```sh
@@ -226,7 +230,11 @@ rbx mytags create '名前'              # トップレベルカテゴリ作成�
 rbx mytags create '名前' --parent CATEGORY_ID
                                        # カテゴリ配下にタグ作成（dry-run）
 rbx mytags delete <id>                 # タグ削除（dry-run）
+rbx mytags dedupe                      # 同じ曲・同じタグの重複行を 1 本にまとめる（dry-run）
 ```
+
+`dedupe` は曲とタグの組ごとにいちばん古い行を残し、残りを 1 トランザクションで外す。
+rekordbox がまた重複を作ったら何度でも回してよい。
 
 ### history（再生履歴）
 

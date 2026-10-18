@@ -213,6 +213,10 @@ rbx tracks mytags remove <track_id> <tag_id>
                                        # untag a track (dry-run)
 ```
 
+rekordbox sometimes writes the same tag on the same track more than once.
+`list` and `add` show how many rows a tag has (`rows`) and point to `mytags dedupe` when there is more than one.
+`remove` removes every row of the tag.
+
 ### playlists
 
 ```sh
@@ -243,7 +247,11 @@ rbx mytags create 'name'              # create top-level category (dry-run)
 rbx mytags create 'name' --parent CATEGORY_ID
                                        # create tag under category (dry-run)
 rbx mytags delete <id>                 # delete a tag (dry-run)
+rbx mytags dedupe                      # merge duplicate rows of a tag on a track into one (dry-run)
 ```
+
+`dedupe` keeps the oldest row of each track and tag and removes the others in one transaction.
+It is safe to run again whenever rekordbox has made new duplicates.
 
 ### history
 

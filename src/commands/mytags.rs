@@ -328,6 +328,10 @@ pub(crate) fn describe(action: Option<&str>) -> Option<serde_json::Value> {
                     "Create a new My Tag or category (dry-run by default)",
                 ),
                 ("delete", "Delete a My Tag (dry-run by default)"),
+                (
+                    "dedupe",
+                    "Merge duplicate rows of a tag on a track into one (dry-run by default)",
+                ),
             ],
         ),
         Some("list") => describe_command(
@@ -385,6 +389,26 @@ pub(crate) fn describe(action: Option<&str>) -> Option<serde_json::Value> {
                 "rbx mytags delete TAG_ID",
                 "rbx mytags delete TAG_ID --execute",
             ],
+        ),
+
+        Some("dedupe") => describe_command(
+            "mytags dedupe",
+            &[flag(
+                "--execute",
+                "bool",
+                false,
+                "Actually apply the change (default: dry-run)",
+            )],
+            &serde_json::json!({
+                "type": "object",
+                "description": "dry-run: plan, --execute: result",
+                "properties": {
+                    "tracks": { "type": "integer", "description": "Tracks with duplicate rows" },
+                    "pairs": { "type": "integer", "description": "Track and tag pairs with duplicate rows" },
+                    "removed_rows": { "type": "integer", "description": "Rows removed (all but the oldest of each pair)" },
+                },
+            }),
+            &["rbx mytags dedupe", "rbx mytags dedupe --execute"],
         ),
 
         // history
