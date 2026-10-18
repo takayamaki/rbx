@@ -2808,7 +2808,41 @@ async fn tracks_mytags_add_same_tag_twice_inserts_one_row() {
 /// `add` of a tag the track already has with duplicate rows says how many rows it has,
 /// points to `mytags dedupe`, and leaves the rows as they are.
 #[tokio::test]
-async fn tracks_mytags_add_reports_duplicate_rows_and_leaves_them() {}
+async fn tracks_mytags_add_reports_duplicate_rows_and_leaves_them() {
+    let (db_path, _dir) = common::setup_db().await;
+    let pool = common::open_pool(&db_path).await;
+    for id in ["9001", "9002"] {
+        seed_song_mytag(&pool, id, "101", "402", common::SEED_TS, 0).await;
+    }
+    pool.close().await;
+
+    let assert = rbx_cmd(&db_path)
+        .args(["tracks", "mytags", "add", "101", "402", "403", "--execute"])
+        .assert()
+        .code(0);
+    let json = stdout_json(&assert);
+
+    let skipped = &json["result"]["skipped"][0];
+    assert_eq!(
+        (skipped["id"].as_str(), skipped["rows"].as_i64()),
+        (Some("402"), Some(2))
+    );
+    assert!(
+        json["next_step"]
+            .as_str()
+            .unwrap()
+            .contains("rbx mytags dedupe"),
+        "next_step: {}",
+        json["next_step"]
+    );
+
+    let pool = common::open_pool(&db_path).await;
+    let rows = song_mytag_rows(&pool, "101", "402").await;
+    assert_eq!(
+        rows,
+        vec![("9001".to_string(), 0, 10), ("9002".to_string(), 0, 10)]
+    );
+}
 
 /// `tracks mytags list` shows the row count of a duplicated tag and points to `mytags dedupe`.
 #[tokio::test]

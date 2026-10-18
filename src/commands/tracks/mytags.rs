@@ -107,11 +107,12 @@ async fn handle_track_mytag_add(
             }
             Err(e) => return db_error(e),
         };
-        let exists = sqlx::query_as::<_, (i32,)>(
-            "SELECT 1 FROM djmdSongMyTag WHERE MyTagID = ? AND ContentID = ? AND rb_local_deleted = 0"
-        ).bind(tid).bind(track_id).fetch_optional(pool).await.ok().flatten().is_some();
-        if exists {
-            skipped.push(serde_json::json!({ "id": tid, "name": tag_name }));
+        let rows = match count_rows(pool, track_id, tid).await {
+            Ok(n) => n,
+            Err(e) => return db_error(e),
+        };
+        if rows > 0 {
+            skipped.push(serde_json::json!({ "id": tid, "name": tag_name, "rows": rows }));
         } else {
             tags.push((tid.clone(), tag_name));
         }
@@ -124,21 +125,27 @@ async fn handle_track_mytag_add(
         "skipped_already_assigned": skipped,
     });
 
+    let dedupe_hint = duplicate_hint(&skipped);
+
     if tags.is_empty() {
         return (
             output::error(
                 "conflict",
                 output::EXIT_CONFLICT,
                 "All specified tags are already assigned",
-                None,
+                dedupe_hint.as_deref(),
             ),
             output::EXIT_CONFLICT,
         );
     }
 
     if !execute {
+        let next_step = match &dedupe_hint {
+            Some(h) => format!("Add --execute to apply. {}", h),
+            None => "Add --execute to apply".to_string(),
+        };
         return (
-            output::mutation_dry_run("tracks.mytags.add", plan, "Add --execute to apply"),
+            output::mutation_dry_run("tracks.mytags.add", plan, &next_step),
             output::EXIT_OK,
         );
     }
@@ -171,17 +178,18 @@ async fn handle_track_mytag_add(
     }
     sqlx::query("COMMIT").execute(pool).await.ok();
 
-    (
-        output::mutation_done(
-            "tracks.mytags.add",
-            serde_json::json!({
-                "track": { "id": track_id, "title": title, "artist": artist },
-                "added": added,
-                "skipped": skipped,
-            }),
-        ),
-        output::EXIT_OK,
-    )
+    let mut done = output::mutation_done(
+        "tracks.mytags.add",
+        serde_json::json!({
+            "track": { "id": track_id, "title": title, "artist": artist },
+            "added": added,
+            "skipped": skipped,
+        }),
+    );
+    if let Some(h) = dedupe_hint {
+        done["next_step"] = serde_json::Value::String(h);
+    }
+    (done, output::EXIT_OK)
 }
 
 async fn handle_track_mytag_remove(
@@ -269,6 +277,35 @@ async fn handle_track_mytag_remove(
         ),
         output::EXIT_OK,
     )
+}
+
+/// Number of live rows of a tag on a track. rekordbox sometimes writes the same pair more than once.
+async fn count_rows(pool: &SqlitePool, track_id: &str, tag_id: &str) -> Result<i64, sqlx::Error> {
+    let (n,) = sqlx::query_as::<_, (i64,)>(
+        "SELECT COUNT(*) FROM djmdSongMyTag \
+         WHERE MyTagID = ? AND ContentID = ? AND rb_local_deleted = 0",
+    )
+    .bind(tag_id)
+    .bind(track_id)
+    .fetch_one(pool)
+    .await?;
+    Ok(n)
+}
+
+/// A next_step pointing to `mytags dedupe` when some tag has more than one row.
+fn duplicate_hint(tags: &[serde_json::Value]) -> Option<String> {
+    let dups: Vec<String> = tags
+        .iter()
+        .filter(|t| t["rows"].as_i64().unwrap_or(0) > 1)
+        .map(|t| format!("{} ({} rows)", t["id"].as_str().unwrap_or(""), t["rows"]))
+        .collect();
+    if dups.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "Tags with duplicate rows on this track: {}. Run 'rbx mytags dedupe' to merge them",
+        dups.join(", ")
+    ))
 }
 
 /// Soft-deletes every live row of each tag on the track, giving each row a new USN.
