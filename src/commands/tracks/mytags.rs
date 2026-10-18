@@ -153,6 +153,31 @@ async fn handle_track_mytag_add(
     let now = now_datetime();
     let mut added = Vec::new();
     sqlx::query("BEGIN").execute(pool).await.ok();
+    // rekordbox may have written a row since the check above; check again inside the transaction.
+    for (tid, tag_name) in &tags {
+        match count_rows(pool, track_id, tid).await {
+            Ok(0) => {}
+            Ok(_) => {
+                sqlx::query("ROLLBACK").execute(pool).await.ok();
+                return (
+                    output::error(
+                        "conflict",
+                        output::EXIT_CONFLICT,
+                        &format!(
+                            "Tag '{}' was assigned while adding; nothing was changed",
+                            tag_name
+                        ),
+                        Some("Run the command again"),
+                    ),
+                    output::EXIT_CONFLICT,
+                );
+            }
+            Err(e) => {
+                sqlx::query("ROLLBACK").execute(pool).await.ok();
+                return db_error(e);
+            }
+        }
+    }
     let mut base_usn = match allocate_usns(pool, tags.len() as i64).await {
         Ok(v) => v,
         Err(e) => {
@@ -231,16 +256,19 @@ async fn handle_track_mytag_remove(
             }
             Err(e) => return db_error(e),
         };
-        let rows = match sqlx::query_as::<_, (i64,)>(
-            "SELECT COUNT(*) FROM djmdSongMyTag WHERE MyTagID = ? AND ContentID = ? AND rb_local_deleted = 0"
-        ).bind(tid).bind(track_id).fetch_one(pool).await {
-            Ok((n,)) if n > 0 => n,
-            Ok(_) => return (
-                output::error("not_found", output::EXIT_NOT_FOUND,
-                    &format!("Tag '{}' is not assigned to '{}'", tag_name, title),
-                    None),
-                output::EXIT_NOT_FOUND,
-            ),
+        let rows = match count_rows(pool, track_id, tid).await {
+            Ok(n) if n > 0 => n,
+            Ok(_) => {
+                return (
+                    output::error(
+                        "not_found",
+                        output::EXIT_NOT_FOUND,
+                        &format!("Tag '{}' is not assigned to '{}'", tag_name, title),
+                        None,
+                    ),
+                    output::EXIT_NOT_FOUND,
+                )
+            }
             Err(e) => return db_error(e),
         };
         targets.push((tid.clone(), tag_name, rows));
