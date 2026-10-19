@@ -52,7 +52,8 @@ pub async fn use_wal(path: &Path) {
         )
         .await
         .unwrap();
-    pool.close().await;
+    // A connection left open here would keep rbx's close from removing master.db-wal.
+    rbx::db::close(&pool).await;
 }
 
 /// Opens the fixture DB through rbx's own opener (same code path as the CLI).
