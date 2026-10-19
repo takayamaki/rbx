@@ -54,7 +54,7 @@ async fn create_schema(pool: &SqlitePool) {
              Length INTEGER, BPM INTEGER, FolderPath TEXT, FileNameL TEXT, FileNameS TEXT, \
              Rating INTEGER, ColorID TEXT, Commnt TEXT, \
              GenreID TEXT, AlbumID TEXT, TrackNo INTEGER, DiscNo INTEGER, ReleaseYear INTEGER, \
-             FileType INTEGER, CueUpdated TEXT, AnalysisDataPath TEXT, {})",
+             FileType INTEGER, CueUpdated TEXT, AnalysisDataPath TEXT, ImagePath TEXT, {})",
             RB_COLUMNS
         ),
         format!(
@@ -121,6 +121,10 @@ async fn create_schema(pool: &SqlitePool) {
              ID TEXT PRIMARY KEY, HistoryID TEXT, ContentID TEXT, TrackNo INTEGER, {})",
             RB_COLUMNS
         ),
+        "CREATE TABLE djmdProperty (\
+         DBID TEXT PRIMARY KEY, DBVersion TEXT, BaseDBDrive TEXT, CurrentDBDrive TEXT, \
+         DeviceID TEXT, created_at TEXT, updated_at TEXT)"
+            .to_string(),
         "CREATE TABLE agentRegistry (\
          registry_id TEXT PRIMARY KEY, id_1 TEXT, id_2 TEXT, \
          int_1 INTEGER, int_2 INTEGER, str_1 TEXT, str_2 TEXT, \
@@ -134,6 +138,16 @@ async fn create_schema(pool: &SqlitePool) {
 }
 
 async fn seed(pool: &SqlitePool) {
+    sqlx::query(
+        "INSERT INTO djmdProperty (DBID, DBVersion, BaseDBDrive, CurrentDBDrive, created_at, updated_at) \
+         VALUES ('3199303365', '6000', 'C:/', 'C:/', ?, ?)",
+    )
+    .bind(SEED_TS)
+    .bind(SEED_TS)
+    .execute(pool)
+    .await
+    .unwrap();
+
     sqlx::query(
         "INSERT INTO agentRegistry (registry_id, int_1, created_at, updated_at) \
          VALUES ('localUpdateCount', 1000, ?, ?)",

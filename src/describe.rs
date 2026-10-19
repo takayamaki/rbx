@@ -1,6 +1,6 @@
 use rbx::output;
 
-use crate::commands::{history, mytags, playlists, query, tracks};
+use crate::commands::{backup, history, mytags, playlists, query, tracks};
 
 /// `rbx describe [resource] [action]`. Each command module describes its own
 /// resource; this only routes and builds the shared envelopes.
@@ -15,6 +15,7 @@ pub(crate) fn handle_describe(
         Some("playlists") => playlists::describe(action),
         Some("mytags") => mytags::describe(action),
         Some("history") => history::describe(action),
+        Some("backup") => backup::describe(action),
         Some("query") => query::describe(action),
         Some(r) => {
             return output::error(
@@ -48,6 +49,7 @@ fn describe_root() -> serde_json::Value {
             { "name": "playlists", "description": "Query playlists and their contents" },
             { "name": "mytags", "description": "Manage My Tag categories and tags (CRUD)" },
             { "name": "history", "description": "Query play history sessions" },
+            { "name": "backup", "description": "Back up the library in the same shape as rekordbox's own library backup" },
             { "name": "query", "description": "Run raw SQL against master.db (read-only: SELECT/WITH/PRAGMA/EXPLAIN)" },
         ],
         "global_flags": [

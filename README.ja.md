@@ -8,6 +8,7 @@ rekordbox の master.db を操作する CLI ツール。
 rbx は rekordbox の master.db に直接書き込む。
 `--execute` を伴うコマンドを実行する前に、**必ず rekordbox のライブラリをバックアップすること**。
 rekordbox の 環境設定 → 詳細 → データベース → ライブラリーのバックアップ から取れる。
+`rbx backup create`（[backup](#backupライブラリのバックアップ) 参照）なら rekordbox を開かずに同じバックアップを書ける。
 
 このソフトウェアは**いかなる保証もなし**で提供される（[ライセンス](#ライセンス)参照）。
 バックアップせずに実行してライブラリが壊れても自己責任。
@@ -243,6 +244,43 @@ rbx history list                       # 直近の再生セッション（デフ
 rbx history list --limit 5             # 件数指定
 rbx history tracks <session_id>        # セッション内のトラック（再生順）
 ```
+
+### backup（ライブラリのバックアップ）
+
+```sh
+rbx backup create rekordbox_bak_20261015.zip --like rekordbox_bak_20261014.zip
+                                       # zip に入るものを表示（dry-run）
+rbx backup create rekordbox_bak_20261015.zip --like rekordbox_bak_20261014.zip --execute
+                                       # zip を書く
+```
+
+rekordbox 自身のライブラリーのバックアップ（環境設定 → 詳細 → データベース）と同じ形の zip を、rekordbox を開かずに書く。
+rekordbox はこれを復元できる。
+rekordbox 7.2.18 が作ったバックアップと突き合わせ済み：
+44,614 エントリが同じ順に並び、間に変わっていないファイルは中身もすべて一致した。
+
+zip の中身:
+
+- `master.db` と、その隣のライブラリファイル（`masterPlaylists6.xml`・`networkAnalyze6.db` など）
+- rekordbox の設定フォルダ（`agentRegistry` の SyncSettingsRootPath）の設定ファイル 13 個、
+  キー割り当て `rekordbox_*.mappings`、旧 `Pioneer/rekordbox` フォルダの `playlists3.sync`
+- トラックが参照する `share/` 配下の解析フォルダ・アートワークフォルダ
+  （`djmdContent.AnalysisDataPath` / `ImagePath`）。どのトラックも参照しないフォルダは rekordbox と同じく入れない
+- 小さなマニフェスト `contents.xml`
+
+`contents.xml` の大半は PC の情報（rekordbox のバージョン、Windows のユーザーフォルダ）で、WSL からは見えない。
+そこで `--like` に同じ PC で rekordbox が作った以前のバックアップを渡し、
+その `contents.xml` を土台にライブラリの値（`DB_ID`・`CONTENT_NUM`・`DIRECTORY_ARRAY`）だけ差し替える。
+
+WSL では `agentRegistry` の設定フォルダは Windows のパスになっている。
+rbx はドライブのマウントから場所を割り出す：
+rekordbox から見て master.db が `F:\PIONEER\Master`、rbx から見て `/mnt/f/PIONEER/Master` なら、
+`C:\Users\…` は `/mnt/c/Users/…`。
+外れるときは `--settings-dir` を渡す。
+
+ディスクに無いファイル・フォルダは飛ばして `missing` に並べる。
+既存ファイルは上書きしない。`master.db-wal` に中身があるとき（rekordbox が開いている、または正常に閉じなかった）も拒否する。
+rekordbox を閉じてから実行すること。
 
 ### 生SQL
 

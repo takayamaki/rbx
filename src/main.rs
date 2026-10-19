@@ -7,7 +7,7 @@ use clap::Parser;
 use rbx::{db, output};
 
 use cli::{Cli, Commands};
-use commands::{history, mytags, playlists, query, tracks};
+use commands::{backup, history, mytags, playlists, query, tracks};
 
 #[tokio::main]
 async fn main() {
@@ -61,6 +61,7 @@ async fn main() {
         }
         Commands::Mytags { action } => mytags::handle_mytags(&pool, action).await,
         Commands::History { action } => history::handle_history(&pool, action).await,
+        Commands::Backup { action } => backup::handle_backup(&pool, &db_path, action).await,
         Commands::Query { sql, unsafe_write } => {
             query::handle_query(&pool, &sql, unsafe_write).await
         }

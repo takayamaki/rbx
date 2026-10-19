@@ -1,3 +1,4 @@
+pub(crate) mod backup;
 pub(crate) mod history;
 pub(crate) mod mytags;
 pub(crate) mod playlists;

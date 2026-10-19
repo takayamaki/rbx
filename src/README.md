@@ -25,12 +25,14 @@ Rust source code.
 | `commands/playlists.rs` | `playlists *` (incl. `masterPlaylists6.xml` sync) |
 | `commands/mytags.rs` | `mytags *` (tag category / tag CRUD) |
 | `commands/history.rs` | `history *` |
+| `commands/backup.rs` | `backup create`: collects the files rekordbox's library backup has and writes the zip |
 | `commands/query.rs` | `query` (read-only SQL allowlist, `--unsafe-write`) |
 | `describe.rs` | `describe` router and shared builders (`describe_resource`, `describe_command`, `flag`, `mutation_result_schema`). Each command module has its own `describe()` with its flags and output schemas |
 | `db.rs` | master.db connection. Auto-decrypts SQLCipher; falls back to unencrypted DB (for testing) |
 | `helpers.rs` | Native-format helpers: timestamps, USN allocation, numeric IDs |
 | `output.rs` | Structured JSON output helpers. Envelope builders (success/error/mutation) and exit code constants |
 | `playlist_xml.rs` | `masterPlaylists6.xml` node add / remove |
+| `backup.rs` | Library backup helpers: `contents.xml` values (`manifest`, `directory_array`, `db_id`) and Windows path mapping under WSL (`local_path`) |
 | `anlz.rs` | ANLZ analysis files: read / replace the PQTZ beat grid, remove sections |
 
 The layout follows the command tree: to change `rbx tracks cues add`, open `commands/tracks/cues.rs`. Its handler, its `describe` entry and its output schema live there together, so a new flag is added in one file.

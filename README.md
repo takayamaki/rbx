@@ -15,7 +15,8 @@ Designed primarily for coding agents (Claude Code, etc.) — agent-first, not hu
 
 rbx writes directly to your rekordbox master.db.
 Before you run any `--execute` command, **make a backup of your rekordbox library**.
-rekordbox can do this from Preferences → Advanced → Database → Library backup.
+rekordbox can do this from Preferences → Advanced → Database → Library backup,
+and `rbx backup create` (see [backup](#backup)) writes the same backup without opening rekordbox.
 
 This software comes with **no warranty of any kind** (see [License](#license)).
 If you run it without a backup and your library breaks, that is on you.
@@ -260,6 +261,47 @@ rbx history list                       # recent play sessions (default: 20)
 rbx history list --limit 5             # limit results
 rbx history tracks <session_id>        # tracks in a session (play order)
 ```
+
+### backup
+
+```sh
+rbx backup create rekordbox_bak_20261015.zip --like rekordbox_bak_20261014.zip
+                                       # show what would be zipped (dry-run)
+rbx backup create rekordbox_bak_20261015.zip --like rekordbox_bak_20261014.zip --execute
+                                       # write the zip
+```
+
+Writes a library backup in the same shape as rekordbox's own
+(Preferences → Advanced → Database → Library backup), so rekordbox can restore it,
+without opening rekordbox.
+Checked against a backup made by rekordbox 7.2.18:
+the same 44,614 entries in the same order, with the same contents for every file that did not change in between.
+
+The zip has:
+
+- `master.db` and the library files next to it (`masterPlaylists6.xml`, `networkAnalyze6.db`, …)
+- 13 settings files from rekordbox's settings dir (`agentRegistry` SyncSettingsRootPath),
+  the `rekordbox_*.mappings` key mappings, and `playlists3.sync` from the older `Pioneer/rekordbox` dir
+- the analysis and artwork folders under `share/` that tracks refer to
+  (`djmdContent.AnalysisDataPath` / `ImagePath`). Folders no track refers to are left out, as rekordbox does
+- `contents.xml`, a small manifest
+
+Most of `contents.xml` describes the computer (rekordbox version, Windows user folders),
+which rbx cannot see from WSL.
+So `--like` takes an earlier backup made by rekordbox on the same computer,
+and rbx keeps its `contents.xml`, replacing only the library values
+(`DB_ID`, `CONTENT_NUM`, `DIRECTORY_ARRAY`).
+
+Under WSL, the settings dir in `agentRegistry` is a Windows path.
+rbx finds it through the drive mounts:
+when master.db is `F:\PIONEER\Master` to rekordbox and `/mnt/f/PIONEER/Master` to rbx,
+`C:\Users\…` is `/mnt/c/Users/…`.
+Pass `--settings-dir` when that guess is wrong.
+
+Files and folders missing on disk are skipped and listed under `missing`.
+It refuses to overwrite a file, and refuses while `master.db-wal` has pages
+(rekordbox is open, or did not close cleanly).
+Close rekordbox before running it.
 
 ### raw SQL
 
