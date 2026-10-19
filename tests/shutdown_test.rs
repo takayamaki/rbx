@@ -45,4 +45,14 @@ async fn write_command_leaves_no_wal_file() {
 
 /// A write command that fails (exit code 3) also closes master.db before it exits.
 #[tokio::test]
-async fn failed_write_command_leaves_no_wal_file() {}
+async fn failed_write_command_leaves_no_wal_file() {
+    let (db_path, _dir) = common::setup_db().await;
+    common::use_wal(&db_path).await;
+
+    rbx_cmd(&db_path)
+        .args(["tracks", "update", "999", "--comment", "lost", "--execute"])
+        .assert()
+        .code(3);
+
+    assert!(!wal_path(&db_path).exists(), "master.db-wal is left behind");
+}
