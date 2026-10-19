@@ -11,6 +11,12 @@ fn pool_options() -> SqlitePoolOptions {
 }
 
 pub async fn open(path: &Path, read_only: bool) -> Result<SqlitePool, sqlx::Error> {
+    // By default OpenSSL frees its global state in an atexit handler.
+    // A sqlx worker thread can still be inside SQLCipher (and so OpenSSL) at exit,
+    // and the two then corrupt the heap ("malloc_consolidate(): invalid chunk size").
+    // Initialize OpenSSL before SQLCipher does, without that handler.
+    openssl_sys::init();
+
     let quoted_key = format!("'{}'", RB_DB_PASSWORD);
     let mut options = SqliteConnectOptions::new()
         .filename(path)

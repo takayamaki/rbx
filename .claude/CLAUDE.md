@@ -45,6 +45,7 @@ Agent-first CLI design (reference: [Zenn article](https://zenn.dev/assign/articl
 ## Dependencies
 
 - SQLCipher: `libsqlite3-sys` with `bundled-sqlcipher-vendored-openssl` (static link)
+- OpenSSL init: `openssl-sys`, only for `openssl_sys::init()` (no exit-time cleanup that races sqlx's worker threads)
 - CLI: `clap` (derive)
 - Async: `tokio`
 - Serialization: `serde` + `serde_json`
