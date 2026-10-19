@@ -72,4 +72,8 @@ async fn main() {
     if code != output::EXIT_OK {
         std::process::exit(code);
     }
+
+    // Dropping the pool does not wait for its connection to close.
+    // Close it here, or the process exits first and leaves master.db-wal with pages in it.
+    db::close(&pool).await;
 }

@@ -2,7 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
-use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
+use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePool, SqlitePoolOptions};
 use tempfile::TempDir;
 
 const RB_COLUMNS: &str = "\
@@ -39,6 +39,20 @@ pub async fn setup_db() -> (PathBuf, TempDir) {
     pool.close().await;
 
     (db_path, dir)
+}
+
+/// Switches the fixture DB to WAL mode, as rekordbox's master.db is.
+pub async fn use_wal(path: &Path) {
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(
+            SqliteConnectOptions::new()
+                .filename(path)
+                .journal_mode(SqliteJournalMode::Wal),
+        )
+        .await
+        .unwrap();
+    pool.close().await;
 }
 
 /// Opens the fixture DB through rbx's own opener (same code path as the CLI).
