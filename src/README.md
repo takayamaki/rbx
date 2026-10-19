@@ -28,7 +28,7 @@ Rust source code.
 | `commands/backup.rs` | `backup create`: collects the files rekordbox's library backup has and writes the zip |
 | `commands/query.rs` | `query` (read-only SQL allowlist, `--unsafe-write`) |
 | `describe.rs` | `describe` router and shared builders (`describe_resource`, `describe_command`, `flag`, `mutation_result_schema`). Each command module has its own `describe()` with its flags and output schemas |
-| `db.rs` | master.db connection. Auto-decrypts SQLCipher; falls back to unencrypted DB (for testing) |
+| `db.rs` | master.db connection. `open` auto-decrypts SQLCipher and falls back to unencrypted DB (for testing); `close` waits until the connection is closed (`main` calls it before it prints and exits) |
 | `helpers.rs` | Native-format helpers: timestamps, USN allocation, numeric IDs |
 | `output.rs` | Structured JSON output helpers. Envelope builders (success/error/mutation) and exit code constants |
 | `playlist_xml.rs` | `masterPlaylists6.xml` node add / remove |
