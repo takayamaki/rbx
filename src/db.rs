@@ -11,6 +11,12 @@ fn pool_options() -> SqlitePoolOptions {
 }
 
 pub async fn open(path: &Path, read_only: bool) -> Result<SqlitePool, sqlx::Error> {
+    // By default OpenSSL frees its global state in an atexit handler.
+    // A sqlx worker thread can still be inside SQLCipher (and so OpenSSL) at exit,
+    // and the two then corrupt the heap ("malloc_consolidate(): invalid chunk size").
+    // Initialize OpenSSL before SQLCipher does, without that handler.
+    openssl_sys::init();
+
     let quoted_key = format!("'{}'", RB_DB_PASSWORD);
     let mut options = SqliteConnectOptions::new()
         .filename(path)
@@ -27,7 +33,7 @@ pub async fn open(path: &Path, read_only: bool) -> Result<SqlitePool, sqlx::Erro
     {
         return Ok(pool);
     }
-    pool.close().await;
+    close(&pool).await;
 
     // Unencrypted DB (for testing)
     let mut options = SqliteConnectOptions::new().filename(path);
@@ -35,4 +41,17 @@ pub async fn open(path: &Path, read_only: bool) -> Result<SqlitePool, sqlx::Erro
         options = options.read_only(true);
     }
     pool_options().connect_with(options).await
+}
+
+/// Closes the pool and waits until its connection is closed.
+///
+/// A used connection goes back to the pool in a spawned task.
+/// `Pool::close` misses it when that task is still on its way,
+/// and the connection stays open until the process exits.
+/// Acquiring the connection first waits for it to come back.
+pub async fn close(pool: &SqlitePool) {
+    if let Ok(conn) = pool.acquire().await {
+        let _ = conn.close().await;
+    }
+    pool.close().await;
 }

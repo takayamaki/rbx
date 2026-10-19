@@ -21,6 +21,7 @@ Tests are the only guard against that class of bug.
 | `anlz_test.rs` | ANLZ analysis file editing: PQTZ beat grid read / replace, section removal; every other section stays byte for byte. |
 | `backup_test.rs` | `backup create`: the zip has the same files as rekordbox's own library backup (library files, settings, the analysis / artwork folders tracks refer to) and a `contents.xml` with the values rekordbox computes. |
 | `cli_contract_test.rs` | The agent-facing contract, tested through the real binary (`assert_cmd`): JSON envelope shape, semantic exit codes, dry-run defaults, full column set on INSERT, read-only `query` allowlist. |
+| `shutdown_test.rs` | rbx closes master.db before it exits: no `master.db-wal` is left behind after a write, or after a write command that fails. |
 
 ## Why these invariants matter
 

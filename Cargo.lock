@@ -1174,6 +1174,7 @@ dependencies = [
  "chrono",
  "clap",
  "libsqlite3-sys",
+ "openssl-sys",
  "regex",
  "serde",
  "serde_json",
