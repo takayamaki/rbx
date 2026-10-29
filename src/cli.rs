@@ -268,9 +268,9 @@ pub(crate) enum PlaylistsAction {
     },
     /// Find playlists containing a specific track
     Search { track_id: String },
-    /// Create a new playlist (dry-run by default)
+    /// Create a new playlist or folder (dry-run by default)
     Create {
-        /// Playlist name
+        /// Playlist or folder name
         name: String,
         /// Parent folder ID (omit for top-level)
         #[arg(long)]
@@ -282,7 +282,7 @@ pub(crate) enum PlaylistsAction {
         #[arg(long)]
         execute: bool,
     },
-    /// Delete a playlist (dry-run by default)
+    /// Delete a playlist or an empty folder (dry-run by default)
     Delete {
         id: String,
         /// Actually apply the change

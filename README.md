@@ -236,8 +236,14 @@ rbx playlists tracks remove <playlist_id> --position 3
 rbx playlists search <track_id>        # find playlists containing a track
 rbx playlists create 'name' --parent FOLDER_ID
                                        # create playlist (dry-run)
-rbx playlists delete <id>              # delete playlist (dry-run)
+rbx playlists create 'name' --folder   # create folder (dry-run)
+rbx playlists create 'name' --folder --parent FOLDER_ID
+                                       # create folder inside a folder (dry-run)
+rbx playlists delete <id>              # delete playlist or empty folder (dry-run)
 ```
+
+`--parent` must be a folder.
+`delete` refuses a folder that still has playlists or folders in it.
 
 ### mytags
 

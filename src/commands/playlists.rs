@@ -731,8 +731,14 @@ pub(crate) fn describe(action: Option<&str>) -> Option<serde_json::Value> {
                     "Remove a track from a playlist (dry-run by default)",
                 ),
                 ("search", "Find playlists containing a specific track"),
-                ("create", "Create a new playlist (dry-run by default)"),
-                ("delete", "Delete a playlist (dry-run by default)"),
+                (
+                    "create",
+                    "Create a new playlist or folder (dry-run by default)",
+                ),
+                (
+                    "delete",
+                    "Delete a playlist or an empty folder (dry-run by default)",
+                ),
             ],
         ),
         Some("list") => describe_command(
@@ -824,12 +830,18 @@ pub(crate) fn describe(action: Option<&str>) -> Option<serde_json::Value> {
         Some("create") => describe_command(
             "playlists create",
             &[
-                flag("name", "string", true, "Playlist name"),
+                flag("name", "string", true, "Playlist or folder name"),
                 flag(
                     "--parent",
                     "string",
                     false,
-                    "Parent folder ID (omit for top-level)",
+                    "Parent folder ID (omit for top-level). Must be a folder",
+                ),
+                flag(
+                    "--folder",
+                    "bool",
+                    false,
+                    "Create a folder instead of a playlist",
                 ),
                 flag(
                     "--execute",
@@ -842,12 +854,18 @@ pub(crate) fn describe(action: Option<&str>) -> Option<serde_json::Value> {
             &[
                 "rbx playlists create 'My Playlist'",
                 "rbx playlists create 'My Playlist' --parent FOLDER_ID --execute",
+                "rbx playlists create 'My Folder' --folder --execute",
             ],
         ),
         Some("delete") => describe_command(
             "playlists delete",
             &[
-                flag("id", "string", true, "Playlist ID"),
+                flag(
+                    "id",
+                    "string",
+                    true,
+                    "Playlist or folder ID. A folder must be empty",
+                ),
                 flag(
                     "--execute",
                     "bool",

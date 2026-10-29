@@ -219,8 +219,14 @@ rbx playlists tracks remove <playlist_id> --position 3
 rbx playlists search <track_id>        # 曲が所属するプレイリスト逆引き
 rbx playlists create '名前' --parent FOLDER_ID
                                        # プレイリスト新規作成（dry-run）
-rbx playlists delete <id>              # プレイリスト削除（dry-run）
+rbx playlists create '名前' --folder   # フォルダ新規作成（dry-run）
+rbx playlists create '名前' --folder --parent FOLDER_ID
+                                       # フォルダの中にフォルダを作成（dry-run）
+rbx playlists delete <id>              # プレイリスト・空のフォルダ削除（dry-run）
 ```
+
+`--parent` にはフォルダを指定する。
+中にプレイリストやフォルダが残っているフォルダは `delete` できない。
 
 ### mytags（マイタグ自体の管理）
 
