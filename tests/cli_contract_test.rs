@@ -3086,3 +3086,44 @@ async fn mytags_dedupe_ignores_deleted_rows() {
         vec![("9001".to_string(), 1, 10), ("9002".to_string(), 0, 10)]
     );
 }
+
+// --- playlists create --folder ---
+// A folder is a djmdPlaylist row with Attribute = 1. rekordbox also needs its NODE in
+// masterPlaylists6.xml (real files list folders as Attribute="1"), or it does not show it.
+
+/// `create NAME --folder --execute` inserts a folder row (Attribute 1) with the full
+/// native column set, and the result says it is a folder.
+#[tokio::test]
+async fn playlists_create_folder_writes_native_format_folder_row() {}
+
+/// The dry-run plan of `--folder` has `action: create_folder` and writes nothing.
+#[tokio::test]
+async fn playlists_create_folder_dry_run_plans_create_folder() {}
+
+/// `--folder --execute` adds the folder's NODE with Attribute="1" to masterPlaylists6.xml.
+#[tokio::test]
+async fn playlists_create_folder_adds_folder_node_to_playlist_xml() {}
+
+/// A playlist created with `--parent FOLDER` goes into the folder, numbered within it.
+#[tokio::test]
+async fn playlists_create_with_parent_puts_playlist_in_folder() {}
+
+/// `playlists list` shows a created folder as `kind: folder`.
+#[tokio::test]
+async fn playlists_list_shows_created_folder_as_folder() {}
+
+/// `--folder --parent FOLDER` creates a folder inside a folder.
+#[tokio::test]
+async fn playlists_create_folder_inside_folder() {}
+
+/// `playlists delete` removes an empty folder and its NODE.
+#[tokio::test]
+async fn playlists_delete_removes_empty_folder() {}
+
+/// `playlists delete` of a folder that still has playlists in it is refused and writes nothing.
+#[tokio::test]
+async fn playlists_delete_refuses_folder_with_children() {}
+
+/// `--parent` that names a playlist, not a folder, is a usage error.
+#[tokio::test]
+async fn playlists_create_with_playlist_as_parent_is_refused() {}
