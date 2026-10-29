@@ -3158,7 +3158,28 @@ async fn playlists_create_folder_writes_native_format_folder_row() {
 
 /// The dry-run plan of `--folder` has `action: create_folder` and writes nothing.
 #[tokio::test]
-async fn playlists_create_folder_dry_run_plans_create_folder() {}
+async fn playlists_create_folder_dry_run_plans_create_folder() {
+    let (db_path, _dir) = common::setup_db().await;
+
+    let assert = rbx_cmd(&db_path)
+        .args(["playlists", "create", "DRYRUN-FOLDER", "--folder"])
+        .assert()
+        .code(0);
+    let json = stdout_json(&assert);
+
+    assert_eq!(json["dry_run"], true);
+    assert_eq!(json["plan"]["action"], "create_folder");
+    assert_eq!(json["plan"]["name"], "DRYRUN-FOLDER");
+    assert_eq!(json["plan"]["parent_id"], "root");
+
+    let pool = common::open_pool(&db_path).await;
+    let (count,): (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM djmdPlaylist WHERE Name = 'DRYRUN-FOLDER'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(count, 0, "dry-run must not write");
+}
 
 /// `--folder --execute` adds the folder's NODE with Attribute="1" to masterPlaylists6.xml.
 #[tokio::test]

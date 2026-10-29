@@ -505,7 +505,7 @@ async fn handle_playlists_create(
     let parent = parent_id.unwrap_or("root");
 
     let plan = serde_json::json!({
-        "action": "create_playlist",
+        "action": if folder { "create_folder" } else { "create_playlist" },
         "name": name,
         "parent_id": parent,
     });
