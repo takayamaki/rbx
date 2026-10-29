@@ -275,6 +275,9 @@ pub(crate) enum PlaylistsAction {
         /// Parent folder ID (omit for top-level)
         #[arg(long)]
         parent: Option<String>,
+        /// Create a folder instead of a playlist
+        #[arg(long)]
+        folder: bool,
         /// Actually apply the change
         #[arg(long)]
         execute: bool,

@@ -36,9 +36,12 @@ pub(crate) async fn handle_playlists(
         }
         PlaylistsAction::Tracks { action } => handle_playlist_tracks(pool, action).await,
         PlaylistsAction::Search { track_id } => handle_playlists_search(pool, &track_id).await,
-        PlaylistsAction::Create { name, parent, execute } => {
-            handle_playlists_create(pool, db_path, &name, parent.as_deref(), execute).await
-        }
+        PlaylistsAction::Create {
+            name,
+            parent,
+            folder,
+            execute,
+        } => handle_playlists_create(pool, db_path, &name, parent.as_deref(), folder, execute).await,
         PlaylistsAction::Delete { id, execute } => {
             handle_playlists_delete(pool, db_path, &id, execute).await
         }
@@ -478,6 +481,7 @@ async fn handle_playlists_create(
     db_path: &Path,
     name: &str,
     parent_id: Option<&str>,
+    folder: bool,
     execute: bool,
 ) -> (serde_json::Value, i32) {
     if let Some(pid) = parent_id {
@@ -535,16 +539,18 @@ async fn handle_playlists_create(
         Ok((s,)) => s.unwrap_or(0) + 1,
         Err(e) => return db_error(e),
     };
-    // Attribute 0 = playlist (not folder)
+    // Attribute 0 = playlist, 1 = folder
+    let attribute = if folder { 1 } else { 0 };
     match sqlx::query(
         "INSERT INTO djmdPlaylist (ID, Seq, Name, Attribute, ParentID, UUID, \
          rb_data_status, rb_local_data_status, rb_local_deleted, rb_local_synced, rb_local_usn, \
          created_at, updated_at) \
-         VALUES (?, ?, ?, 0, ?, ?, 0, 0, 0, 0, ?, ?, ?)",
+         VALUES (?, ?, ?, ?, ?, ?, 0, 0, 0, 0, ?, ?, ?)",
     )
     .bind(&new_id)
     .bind(seq)
     .bind(name)
+    .bind(attribute)
     .bind(parent)
     .bind(&new_uuid)
     .bind(usn)
@@ -555,15 +561,15 @@ async fn handle_playlists_create(
     {
         Ok(_) => {
             let xml_path = playlist_xml::xml_path_for(db_path);
-            let xml_updated =
-                playlist_xml::add_node(&xml_path, &new_id, parent, 0, now_ms).unwrap_or(false);
+            let xml_updated = playlist_xml::add_node(&xml_path, &new_id, parent, attribute, now_ms)
+                .unwrap_or(false);
             (
                 output::mutation_done(
                     "playlists.create",
                     serde_json::json!({
                         "id": new_id,
                         "name": name,
-                        "kind": "playlist",
+                        "kind": if folder { "folder" } else { "playlist" },
                         "parent_id": parent,
                         "seq": seq,
                         "playlist_xml_updated": xml_updated,

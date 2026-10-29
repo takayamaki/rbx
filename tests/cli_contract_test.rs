@@ -3094,7 +3094,67 @@ async fn mytags_dedupe_ignores_deleted_rows() {
 /// `create NAME --folder --execute` inserts a folder row (Attribute 1) with the full
 /// native column set, and the result says it is a folder.
 #[tokio::test]
-async fn playlists_create_folder_writes_native_format_folder_row() {}
+async fn playlists_create_folder_writes_native_format_folder_row() {
+    let (db_path, _dir) = common::setup_db().await;
+
+    let assert = rbx_cmd(&db_path)
+        .args([
+            "playlists",
+            "create",
+            "FOLDER TEST",
+            "--folder",
+            "--execute",
+        ])
+        .assert()
+        .code(0);
+    let json = stdout_json(&assert);
+
+    assert_eq!(json["kind"], "playlists.create");
+    assert_eq!(json["dry_run"], false);
+    assert_eq!(json["result"]["kind"], "folder");
+    let id = json["result"]["id"].as_str().unwrap();
+    assert!(
+        id.chars().all(|c| c.is_ascii_digit()),
+        "non-numeric ID: {}",
+        id
+    );
+
+    let pool = common::open_pool(&db_path).await;
+    let row: (i64, String, String, i64, i64, String, i64, i64, i64, i64) = sqlx::query_as(
+        "SELECT Attribute, UUID, ParentID, Seq, rb_local_usn, created_at, \
+         rb_data_status, rb_local_data_status, rb_local_deleted, rb_local_synced \
+         FROM djmdPlaylist WHERE ID = ?",
+    )
+    .bind(id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let (attribute, uuid, parent_id, seq, usn, created_at, ds, lds, ld, ls) = row;
+
+    assert_eq!(attribute, 1, "a folder is Attribute 1");
+    assert!(!uuid.is_empty());
+    assert_ne!(uuid, id, "UUID must be distinct from the row ID");
+    assert_eq!(parent_id, "root");
+    assert!(seq >= 1);
+    assert!(
+        ts_regex().is_match(&created_at),
+        "bad timestamp: {}",
+        created_at
+    );
+    assert_eq!((ds, lds, ld, ls), (0, 0, 0, 0));
+
+    let (counter,): (i64,) =
+        sqlx::query_as("SELECT int_1 FROM agentRegistry WHERE registry_id = 'localUpdateCount'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(
+        usn <= counter,
+        "row USN {} exceeds counter {}",
+        usn,
+        counter
+    );
+}
 
 /// The dry-run plan of `--folder` has `action: create_folder` and writes nothing.
 #[tokio::test]
