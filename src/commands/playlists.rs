@@ -485,8 +485,29 @@ async fn handle_playlists_create(
     execute: bool,
 ) -> (serde_json::Value, i32) {
     if let Some(pid) = parent_id {
-        match resolve_playlist_name(pool, pid).await {
-            Ok(Some(_)) => {}
+        match sqlx::query_as::<_, (Option<String>, Option<i32>)>(
+            "SELECT Name, Attribute FROM djmdPlaylist WHERE ID = ?",
+        )
+        .bind(pid)
+        .fetch_optional(pool)
+        .await
+        {
+            Ok(Some((_, Some(1)))) => {}
+            Ok(Some((pname, _))) => {
+                return (
+                    output::error(
+                        "usage",
+                        output::EXIT_USAGE,
+                        &format!(
+                            "--parent must be a folder; '{}' ({}) is not",
+                            pname.unwrap_or_default(),
+                            pid
+                        ),
+                        Some("Use 'rbx playlists list' and pick an ID with kind 'folder'"),
+                    ),
+                    output::EXIT_USAGE,
+                )
+            }
             Ok(None) => {
                 return (
                     output::error(

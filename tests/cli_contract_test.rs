@@ -3360,4 +3360,32 @@ async fn playlists_delete_refuses_folder_with_children() {
 
 /// `--parent` that names a playlist, not a folder, is a usage error.
 #[tokio::test]
-async fn playlists_create_with_playlist_as_parent_is_refused() {}
+async fn playlists_create_with_playlist_as_parent_is_refused() {
+    let (db_path, _dir) = common::setup_db().await;
+
+    for folder in [false, true] {
+        let mut cmd = rbx_cmd(&db_path);
+        cmd.args([
+            "playlists",
+            "create",
+            "BAD PARENT",
+            "--parent",
+            "501",
+            "--execute",
+        ]);
+        if folder {
+            cmd.arg("--folder");
+        }
+        let json = stdout_json(&cmd.assert().code(2));
+        assert_eq!(json["error"]["category"], "usage");
+        assert!(json["error"]["next_step"].is_string());
+    }
+
+    let pool = common::open_pool(&db_path).await;
+    let (count,): (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM djmdPlaylist WHERE Name = 'BAD PARENT'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(count, 0);
+}
