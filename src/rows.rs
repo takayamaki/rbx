@@ -31,7 +31,7 @@ impl TrackRow {
 #[derive(Debug, FromRow)]
 pub(crate) struct PlaylistRow {
     id: String,
-    name: Option<String>,
+    pub(crate) name: Option<String>,
     attribute: Option<i32>,
     parent_id: Option<String>,
 }

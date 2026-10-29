@@ -611,6 +611,33 @@ async fn handle_playlists_delete(
         Err(e) => return db_error(e),
     };
 
+    // Deleting a folder that still has children would leave them with no parent
+    let child_count = match sqlx::query_as::<_, (i32,)>(
+        "SELECT COUNT(*) FROM djmdPlaylist WHERE ParentID = ? AND rb_local_deleted = 0",
+    )
+    .bind(playlist_id)
+    .fetch_one(pool)
+    .await
+    {
+        Ok((c,)) => c,
+        Err(e) => return db_error(e),
+    };
+    if child_count > 0 {
+        return (
+            output::error(
+                "conflict",
+                output::EXIT_CONFLICT,
+                &format!(
+                    "Folder '{}' still has {} playlists or folders in it",
+                    pl.name.as_deref().unwrap_or(""),
+                    child_count
+                ),
+                Some("Delete or move the playlists inside the folder first"),
+            ),
+            output::EXIT_CONFLICT,
+        );
+    }
+
     // Count tracks that would be removed
     let track_count =
         sqlx::query_as::<_, (i32,)>("SELECT COUNT(*) FROM djmdSongPlaylist WHERE PlaylistID = ?")

@@ -3338,7 +3338,25 @@ async fn playlists_delete_removes_empty_folder() {
 
 /// `playlists delete` of a folder that still has playlists in it is refused and writes nothing.
 #[tokio::test]
-async fn playlists_delete_refuses_folder_with_children() {}
+async fn playlists_delete_refuses_folder_with_children() {
+    let (db_path, _dir) = common::setup_db().await;
+    let folder = create_playlist(&db_path, &["FULL FOLDER", "--folder"]);
+    let child = create_playlist(&db_path, &["CHILD", "--parent", &folder]);
+
+    for args in [
+        vec!["playlists", "delete", &folder],
+        vec!["playlists", "delete", &folder, "--execute"],
+    ] {
+        let assert = rbx_cmd(&db_path).args(&args).assert().code(5);
+        let json = stdout_json(&assert);
+        assert_eq!(json["error"]["category"], "conflict");
+        assert!(json["error"]["next_step"].is_string());
+    }
+
+    let pool = common::open_pool(&db_path).await;
+    assert!(playlist_row(&pool, &folder).await.is_some());
+    assert!(playlist_row(&pool, &child).await.is_some());
+}
 
 /// `--parent` that names a playlist, not a folder, is a usage error.
 #[tokio::test]
