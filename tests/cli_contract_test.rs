@@ -3091,6 +3091,49 @@ async fn mytags_dedupe_ignores_deleted_rows() {
 // A folder is a djmdPlaylist row with Attribute = 1. rekordbox also needs its NODE in
 // masterPlaylists6.xml (real files list folders as Attribute="1"), or it does not show it.
 
+const PLAYLIST_XML: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+
+<MASTER_PLAYLIST Version="3.0.0" AutomaticSync="0">
+  <PRODUCT Name="rekordbox" Version="7.2.7" Company="Pioneer DJ"/>
+  <PLAYLISTS>
+    <NODE Id="1F5" ParentId="0" Attribute="0" Timestamp="0" Lib_Type="0" CheckType="0"/>
+  </PLAYLISTS>
+</MASTER_PLAYLIST>
+"#;
+
+/// Writes masterPlaylists6.xml next to master.db (seeded playlist 501 = 0x1F5) and returns its path.
+fn write_playlist_xml(db_path: &std::path::Path) -> std::path::PathBuf {
+    let path = db_path.parent().unwrap().join("masterPlaylists6.xml");
+    std::fs::write(&path, PLAYLIST_XML).unwrap();
+    path
+}
+
+/// Runs `playlists create` with `--execute` and returns the new row's ID.
+fn create_playlist(db_path: &std::path::Path, args: &[&str]) -> String {
+    let assert = rbx_cmd(db_path)
+        .args(["playlists", "create"])
+        .args(args)
+        .arg("--execute")
+        .assert()
+        .code(0);
+    stdout_json(&assert)["result"]["id"]
+        .as_str()
+        .unwrap()
+        .to_string()
+}
+
+/// (Attribute, ParentID, Seq) of a djmdPlaylist row, or None when it is gone.
+async fn playlist_row(pool: &sqlx::SqlitePool, id: &str) -> Option<(i64, String, i64)> {
+    sqlx::query_as("SELECT Attribute, ParentID, Seq FROM djmdPlaylist WHERE ID = ?")
+        .bind(id)
+        .fetch_optional(pool)
+        .await
+        .unwrap()
+}
+
+fn hex_id(id: &str) -> String {
+    format!("{:X}", id.parse::<u64>().unwrap())
+}
 /// `create NAME --folder --execute` inserts a folder row (Attribute 1) with the full
 /// native column set, and the result says it is a folder.
 #[tokio::test]
@@ -3183,23 +3226,115 @@ async fn playlists_create_folder_dry_run_plans_create_folder() {
 
 /// `--folder --execute` adds the folder's NODE with Attribute="1" to masterPlaylists6.xml.
 #[tokio::test]
-async fn playlists_create_folder_adds_folder_node_to_playlist_xml() {}
+async fn playlists_create_folder_adds_folder_node_to_playlist_xml() {
+    let (db_path, _dir) = common::setup_db().await;
+    let xml_path = write_playlist_xml(&db_path);
+
+    let assert = rbx_cmd(&db_path)
+        .args(["playlists", "create", "XML FOLDER", "--folder", "--execute"])
+        .assert()
+        .code(0);
+    let json = stdout_json(&assert);
+    assert_eq!(json["result"]["playlist_xml_updated"], true);
+
+    let id = json["result"]["id"].as_str().unwrap();
+    let content = std::fs::read_to_string(&xml_path).unwrap();
+    let node = format!(
+        "<NODE Id=\"{}\" ParentId=\"0\" Attribute=\"1\" Timestamp=",
+        hex_id(id)
+    );
+    assert!(content.contains(&node), "folder node missing:\n{}", content);
+}
 
 /// A playlist created with `--parent FOLDER` goes into the folder, numbered within it.
 #[tokio::test]
-async fn playlists_create_with_parent_puts_playlist_in_folder() {}
+async fn playlists_create_with_parent_puts_playlist_in_folder() {
+    let (db_path, _dir) = common::setup_db().await;
+    let xml_path = write_playlist_xml(&db_path);
+    let folder = create_playlist(&db_path, &["FOLDER", "--folder"]);
+
+    let first = create_playlist(&db_path, &["IN FOLDER 1", "--parent", &folder]);
+    let second = create_playlist(&db_path, &["IN FOLDER 2", "--parent", &folder]);
+
+    let pool = common::open_pool(&db_path).await;
+    assert_eq!(
+        playlist_row(&pool, &first).await,
+        Some((0, folder.clone(), 1))
+    );
+    assert_eq!(
+        playlist_row(&pool, &second).await,
+        Some((0, folder.clone(), 2))
+    );
+
+    let content = std::fs::read_to_string(&xml_path).unwrap();
+    let node = format!(
+        "<NODE Id=\"{}\" ParentId=\"{}\" Attribute=\"0\" Timestamp=",
+        hex_id(&first),
+        hex_id(&folder)
+    );
+    assert!(
+        content.contains(&node),
+        "playlist node missing:\n{}",
+        content
+    );
+}
 
 /// `playlists list` shows a created folder as `kind: folder`.
 #[tokio::test]
-async fn playlists_list_shows_created_folder_as_folder() {}
+async fn playlists_list_shows_created_folder_as_folder() {
+    let (db_path, _dir) = common::setup_db().await;
+    let folder = create_playlist(&db_path, &["LISTED FOLDER", "--folder"]);
+
+    let assert = rbx_cmd(&db_path)
+        .args(["playlists", "list"])
+        .assert()
+        .code(0);
+    let json = stdout_json(&assert);
+
+    let items = json["items"].as_array().unwrap();
+    let item = items.iter().find(|p| p["id"] == folder.as_str()).unwrap();
+    assert_eq!(item["kind"], "folder");
+    assert_eq!(item["name"], "LISTED FOLDER");
+    let existing = items.iter().find(|p| p["id"] == "501").unwrap();
+    assert_eq!(existing["kind"], "playlist");
+}
 
 /// `--folder --parent FOLDER` creates a folder inside a folder.
 #[tokio::test]
-async fn playlists_create_folder_inside_folder() {}
+async fn playlists_create_folder_inside_folder() {
+    let (db_path, _dir) = common::setup_db().await;
+    let outer = create_playlist(&db_path, &["OUTER", "--folder"]);
+
+    let inner = create_playlist(&db_path, &["INNER", "--folder", "--parent", &outer]);
+
+    let pool = common::open_pool(&db_path).await;
+    assert_eq!(playlist_row(&pool, &inner).await, Some((1, outer, 1)));
+}
 
 /// `playlists delete` removes an empty folder and its NODE.
 #[tokio::test]
-async fn playlists_delete_removes_empty_folder() {}
+async fn playlists_delete_removes_empty_folder() {
+    let (db_path, _dir) = common::setup_db().await;
+    let xml_path = write_playlist_xml(&db_path);
+    let folder = create_playlist(&db_path, &["EMPTY FOLDER", "--folder"]);
+
+    let assert = rbx_cmd(&db_path)
+        .args(["playlists", "delete", &folder, "--execute"])
+        .assert()
+        .code(0);
+    let json = stdout_json(&assert);
+    assert_eq!(json["result"]["playlist"]["kind"], "folder");
+    assert_eq!(json["result"]["playlist_xml_updated"], true);
+
+    let pool = common::open_pool(&db_path).await;
+    assert_eq!(playlist_row(&pool, &folder).await, None);
+    let content = std::fs::read_to_string(&xml_path).unwrap();
+    assert!(
+        !content.contains(&format!("<NODE Id=\"{}\"", hex_id(&folder))),
+        "folder node left:\n{}",
+        content
+    );
+}
 
 /// `playlists delete` of a folder that still has playlists in it is refused and writes nothing.
 #[tokio::test]
