@@ -36,9 +36,12 @@ pub(crate) async fn handle_playlists(
         }
         PlaylistsAction::Tracks { action } => handle_playlist_tracks(pool, action).await,
         PlaylistsAction::Search { track_id } => handle_playlists_search(pool, &track_id).await,
-        PlaylistsAction::Create { name, parent, execute } => {
-            handle_playlists_create(pool, db_path, &name, parent.as_deref(), execute).await
-        }
+        PlaylistsAction::Create {
+            name,
+            parent,
+            folder,
+            execute,
+        } => handle_playlists_create(pool, db_path, &name, parent.as_deref(), folder, execute).await,
         PlaylistsAction::Delete { id, execute } => {
             handle_playlists_delete(pool, db_path, &id, execute).await
         }
@@ -478,11 +481,33 @@ async fn handle_playlists_create(
     db_path: &Path,
     name: &str,
     parent_id: Option<&str>,
+    folder: bool,
     execute: bool,
 ) -> (serde_json::Value, i32) {
     if let Some(pid) = parent_id {
-        match resolve_playlist_name(pool, pid).await {
-            Ok(Some(_)) => {}
+        match sqlx::query_as::<_, (Option<String>, Option<i32>)>(
+            "SELECT Name, Attribute FROM djmdPlaylist WHERE ID = ?",
+        )
+        .bind(pid)
+        .fetch_optional(pool)
+        .await
+        {
+            Ok(Some((_, Some(1)))) => {}
+            Ok(Some((pname, _))) => {
+                return (
+                    output::error(
+                        "usage",
+                        output::EXIT_USAGE,
+                        &format!(
+                            "--parent must be a folder; '{}' ({}) is not",
+                            pname.unwrap_or_default(),
+                            pid
+                        ),
+                        Some("Use 'rbx playlists list' and pick an ID with kind 'folder'"),
+                    ),
+                    output::EXIT_USAGE,
+                )
+            }
             Ok(None) => {
                 return (
                     output::error(
@@ -501,7 +526,7 @@ async fn handle_playlists_create(
     let parent = parent_id.unwrap_or("root");
 
     let plan = serde_json::json!({
-        "action": "create_playlist",
+        "action": if folder { "create_folder" } else { "create_playlist" },
         "name": name,
         "parent_id": parent,
     });
@@ -535,16 +560,18 @@ async fn handle_playlists_create(
         Ok((s,)) => s.unwrap_or(0) + 1,
         Err(e) => return db_error(e),
     };
-    // Attribute 0 = playlist (not folder)
+    // Attribute 0 = playlist, 1 = folder
+    let attribute = if folder { 1 } else { 0 };
     match sqlx::query(
         "INSERT INTO djmdPlaylist (ID, Seq, Name, Attribute, ParentID, UUID, \
          rb_data_status, rb_local_data_status, rb_local_deleted, rb_local_synced, rb_local_usn, \
          created_at, updated_at) \
-         VALUES (?, ?, ?, 0, ?, ?, 0, 0, 0, 0, ?, ?, ?)",
+         VALUES (?, ?, ?, ?, ?, ?, 0, 0, 0, 0, ?, ?, ?)",
     )
     .bind(&new_id)
     .bind(seq)
     .bind(name)
+    .bind(attribute)
     .bind(parent)
     .bind(&new_uuid)
     .bind(usn)
@@ -555,15 +582,15 @@ async fn handle_playlists_create(
     {
         Ok(_) => {
             let xml_path = playlist_xml::xml_path_for(db_path);
-            let xml_updated =
-                playlist_xml::add_node(&xml_path, &new_id, parent, 0, now_ms).unwrap_or(false);
+            let xml_updated = playlist_xml::add_node(&xml_path, &new_id, parent, attribute, now_ms)
+                .unwrap_or(false);
             (
                 output::mutation_done(
                     "playlists.create",
                     serde_json::json!({
                         "id": new_id,
                         "name": name,
-                        "kind": "playlist",
+                        "kind": if folder { "folder" } else { "playlist" },
                         "parent_id": parent,
                         "seq": seq,
                         "playlist_xml_updated": xml_updated,
@@ -604,6 +631,33 @@ async fn handle_playlists_delete(
         }
         Err(e) => return db_error(e),
     };
+
+    // Deleting a folder that still has children would leave them with no parent
+    let child_count = match sqlx::query_as::<_, (i32,)>(
+        "SELECT COUNT(*) FROM djmdPlaylist WHERE ParentID = ? AND rb_local_deleted = 0",
+    )
+    .bind(playlist_id)
+    .fetch_one(pool)
+    .await
+    {
+        Ok((c,)) => c,
+        Err(e) => return db_error(e),
+    };
+    if child_count > 0 {
+        return (
+            output::error(
+                "conflict",
+                output::EXIT_CONFLICT,
+                &format!(
+                    "Folder '{}' still has {} playlists or folders in it",
+                    pl.name.as_deref().unwrap_or(""),
+                    child_count
+                ),
+                Some("Delete or move the playlists inside the folder first"),
+            ),
+            output::EXIT_CONFLICT,
+        );
+    }
 
     // Count tracks that would be removed
     let track_count =
@@ -677,8 +731,14 @@ pub(crate) fn describe(action: Option<&str>) -> Option<serde_json::Value> {
                     "Remove a track from a playlist (dry-run by default)",
                 ),
                 ("search", "Find playlists containing a specific track"),
-                ("create", "Create a new playlist (dry-run by default)"),
-                ("delete", "Delete a playlist (dry-run by default)"),
+                (
+                    "create",
+                    "Create a new playlist or folder (dry-run by default)",
+                ),
+                (
+                    "delete",
+                    "Delete a playlist or an empty folder (dry-run by default)",
+                ),
             ],
         ),
         Some("list") => describe_command(
@@ -770,12 +830,18 @@ pub(crate) fn describe(action: Option<&str>) -> Option<serde_json::Value> {
         Some("create") => describe_command(
             "playlists create",
             &[
-                flag("name", "string", true, "Playlist name"),
+                flag("name", "string", true, "Playlist or folder name"),
                 flag(
                     "--parent",
                     "string",
                     false,
-                    "Parent folder ID (omit for top-level)",
+                    "Parent folder ID (omit for top-level). Must be a folder",
+                ),
+                flag(
+                    "--folder",
+                    "bool",
+                    false,
+                    "Create a folder instead of a playlist",
                 ),
                 flag(
                     "--execute",
@@ -788,12 +854,18 @@ pub(crate) fn describe(action: Option<&str>) -> Option<serde_json::Value> {
             &[
                 "rbx playlists create 'My Playlist'",
                 "rbx playlists create 'My Playlist' --parent FOLDER_ID --execute",
+                "rbx playlists create 'My Folder' --folder --execute",
             ],
         ),
         Some("delete") => describe_command(
             "playlists delete",
             &[
-                flag("id", "string", true, "Playlist ID"),
+                flag(
+                    "id",
+                    "string",
+                    true,
+                    "Playlist or folder ID. A folder must be empty",
+                ),
                 flag(
                     "--execute",
                     "bool",

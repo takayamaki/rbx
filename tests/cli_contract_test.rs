@@ -3086,3 +3086,306 @@ async fn mytags_dedupe_ignores_deleted_rows() {
         vec![("9001".to_string(), 1, 10), ("9002".to_string(), 0, 10)]
     );
 }
+
+// --- playlists create --folder ---
+// A folder is a djmdPlaylist row with Attribute = 1. rekordbox also needs its NODE in
+// masterPlaylists6.xml (real files list folders as Attribute="1"), or it does not show it.
+
+const PLAYLIST_XML: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+
+<MASTER_PLAYLIST Version="3.0.0" AutomaticSync="0">
+  <PRODUCT Name="rekordbox" Version="7.2.7" Company="Pioneer DJ"/>
+  <PLAYLISTS>
+    <NODE Id="1F5" ParentId="0" Attribute="0" Timestamp="0" Lib_Type="0" CheckType="0"/>
+  </PLAYLISTS>
+</MASTER_PLAYLIST>
+"#;
+
+/// Writes masterPlaylists6.xml next to master.db (seeded playlist 501 = 0x1F5) and returns its path.
+fn write_playlist_xml(db_path: &std::path::Path) -> std::path::PathBuf {
+    let path = db_path.parent().unwrap().join("masterPlaylists6.xml");
+    std::fs::write(&path, PLAYLIST_XML).unwrap();
+    path
+}
+
+/// Runs `playlists create` with `--execute` and returns the new row's ID.
+fn create_playlist(db_path: &std::path::Path, args: &[&str]) -> String {
+    let assert = rbx_cmd(db_path)
+        .args(["playlists", "create"])
+        .args(args)
+        .arg("--execute")
+        .assert()
+        .code(0);
+    stdout_json(&assert)["result"]["id"]
+        .as_str()
+        .unwrap()
+        .to_string()
+}
+
+/// (Attribute, ParentID, Seq) of a djmdPlaylist row, or None when it is gone.
+async fn playlist_row(pool: &sqlx::SqlitePool, id: &str) -> Option<(i64, String, i64)> {
+    sqlx::query_as("SELECT Attribute, ParentID, Seq FROM djmdPlaylist WHERE ID = ?")
+        .bind(id)
+        .fetch_optional(pool)
+        .await
+        .unwrap()
+}
+
+fn hex_id(id: &str) -> String {
+    format!("{:X}", id.parse::<u64>().unwrap())
+}
+/// `create NAME --folder --execute` inserts a folder row (Attribute 1) with the full
+/// native column set, and the result says it is a folder.
+#[tokio::test]
+async fn playlists_create_folder_writes_native_format_folder_row() {
+    let (db_path, _dir) = common::setup_db().await;
+
+    let assert = rbx_cmd(&db_path)
+        .args([
+            "playlists",
+            "create",
+            "FOLDER TEST",
+            "--folder",
+            "--execute",
+        ])
+        .assert()
+        .code(0);
+    let json = stdout_json(&assert);
+
+    assert_eq!(json["kind"], "playlists.create");
+    assert_eq!(json["dry_run"], false);
+    assert_eq!(json["result"]["kind"], "folder");
+    let id = json["result"]["id"].as_str().unwrap();
+    assert!(
+        id.chars().all(|c| c.is_ascii_digit()),
+        "non-numeric ID: {}",
+        id
+    );
+
+    let pool = common::open_pool(&db_path).await;
+    let row: (i64, String, String, i64, i64, String, i64, i64, i64, i64) = sqlx::query_as(
+        "SELECT Attribute, UUID, ParentID, Seq, rb_local_usn, created_at, \
+         rb_data_status, rb_local_data_status, rb_local_deleted, rb_local_synced \
+         FROM djmdPlaylist WHERE ID = ?",
+    )
+    .bind(id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let (attribute, uuid, parent_id, seq, usn, created_at, ds, lds, ld, ls) = row;
+
+    assert_eq!(attribute, 1, "a folder is Attribute 1");
+    assert!(!uuid.is_empty());
+    assert_ne!(uuid, id, "UUID must be distinct from the row ID");
+    assert_eq!(parent_id, "root");
+    assert!(seq >= 1);
+    assert!(
+        ts_regex().is_match(&created_at),
+        "bad timestamp: {}",
+        created_at
+    );
+    assert_eq!((ds, lds, ld, ls), (0, 0, 0, 0));
+
+    let (counter,): (i64,) =
+        sqlx::query_as("SELECT int_1 FROM agentRegistry WHERE registry_id = 'localUpdateCount'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(
+        usn <= counter,
+        "row USN {} exceeds counter {}",
+        usn,
+        counter
+    );
+}
+
+/// The dry-run plan of `--folder` has `action: create_folder` and writes nothing.
+#[tokio::test]
+async fn playlists_create_folder_dry_run_plans_create_folder() {
+    let (db_path, _dir) = common::setup_db().await;
+
+    let assert = rbx_cmd(&db_path)
+        .args(["playlists", "create", "DRYRUN-FOLDER", "--folder"])
+        .assert()
+        .code(0);
+    let json = stdout_json(&assert);
+
+    assert_eq!(json["dry_run"], true);
+    assert_eq!(json["plan"]["action"], "create_folder");
+    assert_eq!(json["plan"]["name"], "DRYRUN-FOLDER");
+    assert_eq!(json["plan"]["parent_id"], "root");
+
+    let pool = common::open_pool(&db_path).await;
+    let (count,): (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM djmdPlaylist WHERE Name = 'DRYRUN-FOLDER'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(count, 0, "dry-run must not write");
+}
+
+/// `--folder --execute` adds the folder's NODE with Attribute="1" to masterPlaylists6.xml.
+#[tokio::test]
+async fn playlists_create_folder_adds_folder_node_to_playlist_xml() {
+    let (db_path, _dir) = common::setup_db().await;
+    let xml_path = write_playlist_xml(&db_path);
+
+    let assert = rbx_cmd(&db_path)
+        .args(["playlists", "create", "XML FOLDER", "--folder", "--execute"])
+        .assert()
+        .code(0);
+    let json = stdout_json(&assert);
+    assert_eq!(json["result"]["playlist_xml_updated"], true);
+
+    let id = json["result"]["id"].as_str().unwrap();
+    let content = std::fs::read_to_string(&xml_path).unwrap();
+    let node = format!(
+        "<NODE Id=\"{}\" ParentId=\"0\" Attribute=\"1\" Timestamp=",
+        hex_id(id)
+    );
+    assert!(content.contains(&node), "folder node missing:\n{}", content);
+}
+
+/// A playlist created with `--parent FOLDER` goes into the folder, numbered within it.
+#[tokio::test]
+async fn playlists_create_with_parent_puts_playlist_in_folder() {
+    let (db_path, _dir) = common::setup_db().await;
+    let xml_path = write_playlist_xml(&db_path);
+    let folder = create_playlist(&db_path, &["FOLDER", "--folder"]);
+
+    let first = create_playlist(&db_path, &["IN FOLDER 1", "--parent", &folder]);
+    let second = create_playlist(&db_path, &["IN FOLDER 2", "--parent", &folder]);
+
+    let pool = common::open_pool(&db_path).await;
+    assert_eq!(
+        playlist_row(&pool, &first).await,
+        Some((0, folder.clone(), 1))
+    );
+    assert_eq!(
+        playlist_row(&pool, &second).await,
+        Some((0, folder.clone(), 2))
+    );
+
+    let content = std::fs::read_to_string(&xml_path).unwrap();
+    let node = format!(
+        "<NODE Id=\"{}\" ParentId=\"{}\" Attribute=\"0\" Timestamp=",
+        hex_id(&first),
+        hex_id(&folder)
+    );
+    assert!(
+        content.contains(&node),
+        "playlist node missing:\n{}",
+        content
+    );
+}
+
+/// `playlists list` shows a created folder as `kind: folder`.
+#[tokio::test]
+async fn playlists_list_shows_created_folder_as_folder() {
+    let (db_path, _dir) = common::setup_db().await;
+    let folder = create_playlist(&db_path, &["LISTED FOLDER", "--folder"]);
+
+    let assert = rbx_cmd(&db_path)
+        .args(["playlists", "list"])
+        .assert()
+        .code(0);
+    let json = stdout_json(&assert);
+
+    let items = json["items"].as_array().unwrap();
+    let item = items.iter().find(|p| p["id"] == folder.as_str()).unwrap();
+    assert_eq!(item["kind"], "folder");
+    assert_eq!(item["name"], "LISTED FOLDER");
+    let existing = items.iter().find(|p| p["id"] == "501").unwrap();
+    assert_eq!(existing["kind"], "playlist");
+}
+
+/// `--folder --parent FOLDER` creates a folder inside a folder.
+#[tokio::test]
+async fn playlists_create_folder_inside_folder() {
+    let (db_path, _dir) = common::setup_db().await;
+    let outer = create_playlist(&db_path, &["OUTER", "--folder"]);
+
+    let inner = create_playlist(&db_path, &["INNER", "--folder", "--parent", &outer]);
+
+    let pool = common::open_pool(&db_path).await;
+    assert_eq!(playlist_row(&pool, &inner).await, Some((1, outer, 1)));
+}
+
+/// `playlists delete` removes an empty folder and its NODE.
+#[tokio::test]
+async fn playlists_delete_removes_empty_folder() {
+    let (db_path, _dir) = common::setup_db().await;
+    let xml_path = write_playlist_xml(&db_path);
+    let folder = create_playlist(&db_path, &["EMPTY FOLDER", "--folder"]);
+
+    let assert = rbx_cmd(&db_path)
+        .args(["playlists", "delete", &folder, "--execute"])
+        .assert()
+        .code(0);
+    let json = stdout_json(&assert);
+    assert_eq!(json["result"]["playlist"]["kind"], "folder");
+    assert_eq!(json["result"]["playlist_xml_updated"], true);
+
+    let pool = common::open_pool(&db_path).await;
+    assert_eq!(playlist_row(&pool, &folder).await, None);
+    let content = std::fs::read_to_string(&xml_path).unwrap();
+    assert!(
+        !content.contains(&format!("<NODE Id=\"{}\"", hex_id(&folder))),
+        "folder node left:\n{}",
+        content
+    );
+}
+
+/// `playlists delete` of a folder that still has playlists in it is refused and writes nothing.
+#[tokio::test]
+async fn playlists_delete_refuses_folder_with_children() {
+    let (db_path, _dir) = common::setup_db().await;
+    let folder = create_playlist(&db_path, &["FULL FOLDER", "--folder"]);
+    let child = create_playlist(&db_path, &["CHILD", "--parent", &folder]);
+
+    for args in [
+        vec!["playlists", "delete", &folder],
+        vec!["playlists", "delete", &folder, "--execute"],
+    ] {
+        let assert = rbx_cmd(&db_path).args(&args).assert().code(5);
+        let json = stdout_json(&assert);
+        assert_eq!(json["error"]["category"], "conflict");
+        assert!(json["error"]["next_step"].is_string());
+    }
+
+    let pool = common::open_pool(&db_path).await;
+    assert!(playlist_row(&pool, &folder).await.is_some());
+    assert!(playlist_row(&pool, &child).await.is_some());
+}
+
+/// `--parent` that names a playlist, not a folder, is a usage error.
+#[tokio::test]
+async fn playlists_create_with_playlist_as_parent_is_refused() {
+    let (db_path, _dir) = common::setup_db().await;
+
+    for folder in [false, true] {
+        let mut cmd = rbx_cmd(&db_path);
+        cmd.args([
+            "playlists",
+            "create",
+            "BAD PARENT",
+            "--parent",
+            "501",
+            "--execute",
+        ]);
+        if folder {
+            cmd.arg("--folder");
+        }
+        let json = stdout_json(&cmd.assert().code(2));
+        assert_eq!(json["error"]["category"], "usage");
+        assert!(json["error"]["next_step"].is_string());
+    }
+
+    let pool = common::open_pool(&db_path).await;
+    let (count,): (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM djmdPlaylist WHERE Name = 'BAD PARENT'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(count, 0);
+}
