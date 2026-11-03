@@ -32,9 +32,9 @@ jobs:
           # Apple Silicon runners cross-compile the Intel target with -arch;
           # GitHub is retiring the Intel (macos-13) runners.
           - target: x86_64-apple-darwin
-            os: macos-14
+            os: macos-15
           - target: aarch64-apple-darwin
-            os: macos-14
+            os: macos-15
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
