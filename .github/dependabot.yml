@@ -1,0 +1,12 @@
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    # Only versions out for 7 days or more: a broken or hijacked release is usually pulled by then.
+    cooldown:
+      default-days: 7
+    groups:
+      actions:
+        patterns: ["*"]

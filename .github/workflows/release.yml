@@ -11,11 +11,11 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@v2.9.3
       - name: Test
         run: cargo test --all-targets
       - name: Clippy
@@ -37,11 +37,11 @@ jobs:
             os: macos-15
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@v2.9.3
         with:
           key: ${{ matrix.target }}
       - name: Build
@@ -53,7 +53,7 @@ jobs:
           cp "target/${{ matrix.target }}/release/rbx" "$dist"/
           cp README.md README.ja.md LICENSE "$dist"/
           tar czf "$dist.tar.gz" "$dist"
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@v7.0.2
         with:
           name: ${{ matrix.target }}
           path: rbx-*.tar.gz
@@ -62,13 +62,13 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@v8.0.2
         with:
           path: dist
           merge-multiple: true
       - name: Checksums
         run: cd dist && sha256sum *.tar.gz > SHA256SUMS.txt
-      - uses: softprops/action-gh-release@v3
+      - uses: softprops/action-gh-release@v3.0.3
         with:
           files: |
             dist/*.tar.gz
