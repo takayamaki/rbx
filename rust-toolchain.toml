@@ -1,0 +1,5 @@
+# The Rust version for CI and local builds. Dependabot (rust-toolchain) updates it.
+[toolchain]
+channel = "1.99.1"
+components = ["clippy", "rustfmt"]
+profile = "minimal"
