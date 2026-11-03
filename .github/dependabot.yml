@@ -10,3 +10,11 @@ updates:
     groups:
       actions:
         patterns: ["*"]
+
+  - package-ecosystem: rust-toolchain
+    directory: /
+    schedule:
+      interval: weekly
+    # Wait for the first point release (x.y.1) that often follows a new Rust version.
+    cooldown:
+      default-days: 7

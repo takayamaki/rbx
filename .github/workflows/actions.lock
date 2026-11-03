@@ -5,13 +5,11 @@ version: 'v0.0.3'
 workflows:
     '.github/workflows/ci.yml':
         - 'actions/checkout@v7.0.1'
-        - 'dtolnay/rust-toolchain@stable'
         - 'swatinem/rust-cache@v2.9.3'
     '.github/workflows/release.yml':
         - 'actions/checkout@v7.0.1'
         - 'actions/download-artifact@v8.0.2'
         - 'actions/upload-artifact@v7.0.2'
-        - 'dtolnay/rust-toolchain@stable'
         - 'softprops/action-gh-release@v3.0.3'
         - 'swatinem/rust-cache@v2.9.3'
     '.github/workflows/verify-lockfile.yml':
@@ -32,11 +30,6 @@ dependencies:
         commit: 'sha1-cf430e030ddbb5b0abf93d22962f4752f3646cd9'
         owner_id: 44036562
         repo_id: 192625955
-    'dtolnay/rust-toolchain@stable':
-        ref: 'stable'
-        commit: 'sha1-b725eda525362e7cf34af9a7243cac1e3f01a7ec'
-        owner_id: 1940490
-        repo_id: 260749683
     'softprops/action-gh-release@v3.0.3':
         ref: 'v3.0.3'
         commit: 'sha1-efb35369e0ad2afab669f228072c1b0d510eae64'

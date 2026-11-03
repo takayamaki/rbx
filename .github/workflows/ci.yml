@@ -10,9 +10,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7.0.1
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy, rustfmt
+      # rustup comes with the runner: no third-party action to install Rust.
+      # The version and components come from rust-toolchain.toml (Dependabot updates it).
+      - name: Install Rust
+        run: rustup toolchain install
       - name: Format check
         run: cargo fmt --check
       - uses: Swatinem/rust-cache@v2.9.3
